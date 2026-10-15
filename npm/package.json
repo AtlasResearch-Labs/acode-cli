@@ -1,6 +1,6 @@
 {
   "name": "acode-cli",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Pure Rust Engine)",
   "main": "index.js",
   "bin": {
@@ -29,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AtlasResearch-Labs/Atlas-Daedalus.git"
+    "url": "git+https://github.com/AtlasResearch-Labs/acode-cli.git"
   },
   "homepage": "https://atlasresearchlabs.online",
   "engines": {

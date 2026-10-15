@@ -1,87 +1,107 @@
 # Atlas Daedalus (`acode`)
-> Industrial Autonomous Terminal AI Coder · 100% Pure Native Rust Engine · Atlas Research Labs
+> Industrial Autonomous Terminal AI Coder · Sovereign Pure Rust Engine · Atlas Research Labs
 
-Atlas Daedalus is a sovereign, terminal-native AI software engineer engineered to replace slow, heavy, cloud-locked coding agents (Claude Code, Cursor CLI, OpenAI Codex CLI).
+Atlas Daedalus is an industrial-grade, terminal-native AI software engineering agent designed to supersede heavy, cloud-locked coding assistants (Claude Code, Cursor CLI, OpenAI Codex CLI).
 
-Built in pure native Rust with zero V8 runtime bloat, Daedalus executes with sub-millisecond cold start, an embedded Ripgrep search engine, automated self-healing test loops, and strict zero-emoji OLED monochrome precision.
+Built in 100% pure native Rust with zero V8 runtime overhead, Daedalus executes with sub-millisecond cold start times, embedded Ripgrep search, automated test self-healing loops, and strict zero-emoji OLED monochrome precision.
 
 ---
 
-## Performance Benchmark
+## Technical Specifications
 
 | Metric | Claude Code / Cursor CLI | Atlas Daedalus (`acode`) |
 |---|---|---|
-| Engine | TypeScript / Python / Node.js | **Pure Native Rust** |
-| Runtime Footprint | 150MB - 350MB RSS | **< 8MB RSS** |
+| Engine Architecture | TypeScript / Python / Node.js | **Pure Native Rust (`x86_64`, `aarch64`)** |
+| Memory Footprint (RSS) | 150MB - 350MB | **< 8MB RSS** |
 | Cold-Start Latency | 350ms - 800ms | **< 5ms** |
 | Codebase Search | Spawns external shell / regex | **Embedded Ripgrep Engine (`ignore::WalkBuilder`)** |
-| In-Memory Diffs | Spawns git subprocess | **Native In-Memory (`similar`) Unified Diffs** |
-| Test Self-Healing | Manual / brittle | **Automatic (`cargo test`, `npm test`, `pytest`)** |
-| Design Standard | Emojis & cartoonish output | **Strict Zero-Emoji OLED Black ANSI** |
+| File Diff Generation | Spawns external git process | **Native In-Memory (`similar`) Unified Diffs** |
+| Automated Self-Healing | Brittle / prompt-wrapped | **Autonomous loop (`cargo test`, `npm test`, `pytest`)** |
+| Platform Coverage | Desktop only | **Windows, Linux, macOS, Android (Termux)** |
+| Interface Philosophy | Cartoonish / bloated emojis | **Strict Zero-Emoji OLED Monochrome ANSI** |
 
 ---
 
-## Quickstart
+## Universal Installation
 
-Run directly via `npx` with zero installation:
+Daedalus ships with pre-compiled static native binaries for Windows, Linux, and Android (Termux aarch64). Rust is NOT required on client devices.
 
+### Method 1: NPM / NPX (Zero Setup)
+
+Run instantly without global installation:
 ```bash
-# Interactive OLED terminal REPL
+# Interactive REPL
 npx acode-cli
 
-# Or run non-interactive autonomous tasks
-npx acode-cli "implement user authentication module and verify tests pass"
+# Autonomous task execution
+npx acode-cli "implement jwt authentication and verify tests pass"
 ```
 
-Or install globally:
+Or install globally across any platform:
 ```bash
 npm install -g acode-cli
 acode
 ```
 
+### Method 2: Android Termux (Mobile)
+
+On Android Termux, install Node.js and run directly:
+```bash
+pkg install nodejs
+npm install -g acode-cli
+acode
+```
+The package automatically executes the pre-compiled `linux-aarch64` native engine with zero compilation needed.
+
 ---
 
-## Supported Providers
+## AI Providers & Authentication
 
-Daedalus supports all major AI models via environment variables or CLI flags:
+Daedalus connects seamlessly to sovereign AI routers, multi-model gateways, and local backends.
+
+Configure credentials in `~/.daedalus/.env` or via standard environment variables:
 
 ```bash
+# Atlas AI-Powerbox (Sovereign Gateway)
+export POWERBOX_API_KEY="pbk_live_..."
+export POWERBOX_URL="https://powerbox.atlasresearchlabs.online"
+
 # Google Gemini (Default: gemini-2.5-flash)
-export GEMINI_API_KEY="your-gemini-key"
+export GEMINI_API_KEY="AIzaSy..."
 
 # Anthropic Claude (Default: claude-3-5-sonnet)
-export ANTHROPIC_API_KEY="your-anthropic-key"
+export ANTHROPIC_API_KEY="sk-ant-..."
 
-# OpenAI GPT-4o
-export OPENAI_API_KEY="your-openai-key"
+# OpenAI (Default: gpt-4o)
+export OPENAI_API_KEY="sk-proj-..."
 
-# Local Ollama (Zero cloud, 100% offline)
+# Local Ollama (100% Offline Sovereign Inference)
 export OLLAMA_HOST="http://localhost:11434"
 acode -p ollama -m deepseek-coder:6.7b
 ```
 
 ---
 
-## Built-in Slash Commands
+## Interactive REPL Slash Commands
 
-When running in interactive REPL mode:
+Inside the interactive terminal session, invoke slash commands for instant developer actions:
 
 | Command | Action |
 |---|---|
-| `/help` | Display command cheatsheet and keyboard shortcuts |
+| `/help` | Print cheatsheet and keyboard navigation keys |
 | `/diff` | Display color-coded unified git diff of all modifications |
-| `/status` | Display modified files, current provider, and active model |
+| `/status` | View modified files, token counters, and active engine configuration |
 | `/commit` | Generate conventional commit and commit with sovereign author |
-| `/cost` | Display session token usage, latency, and Chronicle cost breakdown |
-| `/audit` | Run autonomous AST code review via Argus |
+| `/cost` | Display session token consumption, network latency, and cost ledger |
+| `/audit` | Execute autonomous AST static code review |
 | `/tunnel` | Expose active port via Beacon public tunnel |
-| `/pulse` | Inspect host CPU, memory, and process health |
+| `/pulse` | Inspect host CPU, memory, and process health metrics |
 | `/model <m>` | Dynamically switch LLM model mid-session |
-| `/clear` | Clear terminal screen and reset conversation trajectory |
-| `/exit` | Exit Daedalus |
+| `/clear` | Clear terminal viewport and reset trajectory buffer |
+| `/exit` | Terminate session |
 
 ---
 
 ## License
 
-MIT © Atlas Research Labs
+MIT (C) 2026 Atlas Research Labs

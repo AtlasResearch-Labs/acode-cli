@@ -1,9 +1,27 @@
+# Build Artifacts
 /target/
+dist/
+node_modules/
+npm/bin/native/
+*.tgz
+*.zip
 **/*.rs.bk
 Cargo.lock
+
+# Environment & Sensitive Credentials (Rule 6 & Security)
 .env
+.env*
+*.key
+*.pem
+*.secret
+
+# AI Markdown & Planning Scratchpads (Rule 6)
+*plan*.md
+*progress*.md
+PROGRESS.md
+AGENTS.md
+scratch/
+brain/
 .chronicle/
 .daedalus/
 .helix/
-npm/bin/native/
-*.tgz

@@ -25,12 +25,74 @@ impl ProviderRouter {
     }
 
     fn resolve_config(override_model: Option<String>, override_provider: Option<String>) -> ProviderConfig {
-        if let (Some(m), Some(p)) = (override_model.clone(), override_provider.clone()) {
+        let requested_provider = override_provider
+            .or_else(|| env::var("ACODE_PROVIDER").ok())
+            .or_else(|| env::var("DAEDALUS_PROVIDER").ok());
+
+        let get_powerbox_key = || env::var("POWERBOX_API_KEY").or_else(|_| env::var("POWERBOX_MASTER_KEY")).ok();
+        let get_powerbox_base = || env::var("POWERBOX_BASE_URL").unwrap_or_else(|_| "https://powerbox.atlasresearchlabs.online/v1".to_string());
+        let get_powerbox_model = |ov: Option<String>| ov.or_else(|| env::var("POWERBOX_MODEL").ok()).unwrap_or_else(|| "auto".to_string());
+
+        // 1. Explicit provider requested
+        if let Some(p) = requested_provider {
+            match p.to_lowercase().as_str() {
+                "powerbox" => {
+                    return ProviderConfig {
+                        provider: "powerbox".to_string(),
+                        model: get_powerbox_model(override_model),
+                        api_key: get_powerbox_key(),
+                        base_url: Some(get_powerbox_base()),
+                        temperature: 0.2,
+                    };
+                }
+                "gemini" => {
+                    return ProviderConfig {
+                        provider: "gemini".to_string(),
+                        model: override_model.or_else(|| env::var("GEMINI_MODEL").ok()).unwrap_or_else(|| "gemini-2.5-flash".to_string()),
+                        api_key: env::var("GEMINI_API_KEY").ok(),
+                        base_url: None,
+                        temperature: 0.2,
+                    };
+                }
+                "anthropic" => {
+                    return ProviderConfig {
+                        provider: "anthropic".to_string(),
+                        model: override_model.or_else(|| env::var("ANTHROPIC_MODEL").ok()).unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
+                        api_key: env::var("ANTHROPIC_API_KEY").ok(),
+                        base_url: None,
+                        temperature: 0.2,
+                    };
+                }
+                "openai" => {
+                    return ProviderConfig {
+                        provider: "openai".to_string(),
+                        model: override_model.or_else(|| env::var("OPENAI_MODEL").ok()).unwrap_or_else(|| "gpt-4o".to_string()),
+                        api_key: env::var("OPENAI_API_KEY").ok(),
+                        base_url: env::var("OPENAI_BASE_URL").ok(),
+                        temperature: 0.2,
+                    };
+                }
+                "ollama" => {
+                    return ProviderConfig {
+                        provider: "ollama".to_string(),
+                        model: override_model.or_else(|| env::var("OLLAMA_MODEL").ok()).unwrap_or_else(|| "llama3".to_string()),
+                        api_key: Some("ollama".to_string()),
+                        base_url: Some(env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".to_string())),
+                        temperature: 0.2,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        // 2. Priority check based on available credentials in environment
+        // Powerbox is Priority #1 for Atlas Research Labs fleet
+        if let Some(key) = get_powerbox_key() {
             return ProviderConfig {
-                provider: p,
-                model: m,
-                api_key: None,
-                base_url: None,
+                provider: "powerbox".to_string(),
+                model: get_powerbox_model(override_model),
+                api_key: Some(key),
+                base_url: Some(get_powerbox_base()),
                 temperature: 0.2,
             };
         }
@@ -65,22 +127,12 @@ impl ProviderRouter {
             };
         }
 
-        if let Ok(key) = env::var("POWERBOX_API_KEY") {
-            return ProviderConfig {
-                provider: "powerbox".to_string(),
-                model: override_model.unwrap_or_else(|| "gemini-2.5-flash".to_string()),
-                api_key: Some(key),
-                base_url: Some("https://powerbox.atlasresearchlabs.online/v1".to_string()),
-                temperature: 0.2,
-            };
-        }
-
-        // Default to Gemini or Ollama
+        // 3. Fallback default
         ProviderConfig {
-            provider: "gemini".to_string(),
-            model: override_model.unwrap_or_else(|| "gemini-2.5-flash".to_string()),
-            api_key: env::var("GEMINI_API_KEY").ok(),
-            base_url: None,
+            provider: "powerbox".to_string(),
+            model: override_model.unwrap_or_else(|| "auto".to_string()),
+            api_key: get_powerbox_key(),
+            base_url: Some(get_powerbox_base()),
             temperature: 0.2,
         }
     }
@@ -159,15 +211,38 @@ impl ProviderRouter {
             body["tools"] = json!([{ "functionDeclarations": func_decls }]);
         }
 
-        let resp = self.client.post(&url)
+        let mut resp = self.client.post(&url)
             .json(&body)
             .send()
             .await
             .map_err(|e| format!("Gemini network error: {}", e))?;
 
+        if resp.status().as_u16() == 429 && self.config.model != "gemini-2.0-flash" {
+            let fallback_url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}",
+                api_key
+            );
+            println!("\n{}[ACODE] Active model '{}' reached rate limit (429). Automatically falling back to gemini-2.0-flash (1,500 RPD)...{}\n", crate::cli::tui::TuiRenderer::YELLOW, self.config.model, crate::cli::tui::TuiRenderer::RESET);
+            if let Ok(fb_resp) = self.client.post(&fallback_url).json(&body).send().await {
+                if fb_resp.status().is_success() {
+                    resp = fb_resp;
+                }
+            }
+        }
+
         if !resp.status().is_success() {
             let status = resp.status();
             let err_body = resp.text().await.unwrap_or_default();
+            if status.as_u16() == 429 {
+                return Err(format!(
+                    "Gemini API Quota Exceeded (429). The model '{}' reached its rate limit.\n\
+                    Suggested Actions:\n\
+                      1. Switch model: /model gemini-2.0-flash (1,500 requests/day on free tier)\n\
+                      2. Configure key: /key gemini <your_key> or /key anthropic <key>\n\
+                      3. Check rate limits: https://ai.dev/rate-limit",
+                    self.config.model
+                ));
+            }
             return Err(format!("Gemini API error {}: {}", status, err_body));
         }
 
@@ -316,18 +391,34 @@ impl ProviderRouter {
     }
 
     async fn complete_openai_compatible(&self, messages: &[LLMMessage], tools: &[ToolDefinition]) -> Result<LLMResponse, String> {
-        let base_url = self.config.base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let base_url = self.config.base_url.clone().unwrap_or_else(|| {
+            if self.config.provider == "powerbox" {
+                "https://powerbox.atlasresearchlabs.online/v1".to_string()
+            } else {
+                "https://api.openai.com/v1".to_string()
+            }
+        });
         let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-        let api_key = self.config.api_key.clone().or_else(|| env::var("OPENAI_API_KEY").ok()).unwrap_or_else(|| "dummy".to_string());
+        let api_key = self.config.api_key.clone().or_else(|| {
+            if self.config.provider == "powerbox" {
+                env::var("POWERBOX_API_KEY").or_else(|_| env::var("POWERBOX_MASTER_KEY")).ok()
+            } else {
+                env::var("OPENAI_API_KEY").ok()
+            }
+        }).unwrap_or_else(|| "dummy".to_string());
 
         let mut formatted_msgs = Vec::new();
         for m in messages {
             if m.role == "tool" {
-                formatted_msgs.push(json!({
+                let mut tool_obj = json!({
                     "role": "tool",
                     "tool_call_id": m.tool_call_id.clone().unwrap_or_else(|| "call_1".to_string()),
                     "content": m.content
-                }));
+                });
+                if let Some(n) = &m.name {
+                    tool_obj["name"] = json!(n);
+                }
+                formatted_msgs.push(tool_obj);
                 continue;
             }
 
@@ -381,15 +472,15 @@ impl ProviderRouter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("OpenAI network error: {}", e))?;
+            .map_err(|e| format!("{} network error: {}", self.config.provider.to_uppercase(), e))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let err_body = resp.text().await.unwrap_or_default();
-            return Err(format!("OpenAI API error {}: {}", status, err_body));
+            return Err(format!("{} API error {}: {}", self.config.provider.to_uppercase(), status, err_body));
         }
 
-        let json_resp: Value = resp.json().await.map_err(|e| format!("OpenAI parse error: {}", e))?;
+        let json_resp: Value = resp.json().await.map_err(|e| format!("{} parse error: {}", self.config.provider.to_uppercase(), e))?;
 
         let choice = json_resp.get("choices").and_then(|c| c.get(0));
         let message = choice.and_then(|c| c.get("message"));

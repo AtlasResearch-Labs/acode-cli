@@ -151,6 +151,10 @@ impl SlashCommandHandler {
 
                 orchestrator.provider.config.api_key = Some(key.to_string());
                 orchestrator.provider.config.provider = provider.clone();
+                if provider == "powerbox" {
+                    orchestrator.provider.config.base_url = Some("https://powerbox.atlasresearchlabs.online/v1".to_string());
+                    orchestrator.provider.config.model = "auto".to_string();
+                }
 
                 if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
                     let daedalus_dir = std::path::PathBuf::from(home).join(".daedalus");
@@ -176,6 +180,16 @@ impl SlashCommandHandler {
                     } else {
                         existing.push_str(&format!("{}={}\n", var_name, key));
                     }
+
+                    if provider == "powerbox" {
+                        if !existing.contains("POWERBOX_BASE_URL") {
+                            existing.push_str("POWERBOX_BASE_URL=https://powerbox.atlasresearchlabs.online/v1\n");
+                        }
+                        if !existing.contains("POWERBOX_MODEL") {
+                            existing.push_str("POWERBOX_MODEL=auto\n");
+                        }
+                    }
+
                     let _ = std::fs::write(&env_file, existing);
                     println!("{}[OK] Saved '{}' key to ~/.daedalus/.env{}\n", TuiRenderer::GREEN, provider, TuiRenderer::RESET);
                 } else {

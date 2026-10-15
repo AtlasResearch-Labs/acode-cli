@@ -24,7 +24,7 @@ use crate::cli::tui::TuiRenderer;
 #[command(
     name = "acode",
     author = "Eren Yeager <victor@atlasresearchlabs.online>",
-    version = "1.0.6-industrial",
+    version = "1.0.7-industrial",
     about = "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Atlas Research Labs)"
 )]
 struct CliArgs {
@@ -55,6 +55,12 @@ async fn main() {
         if global_env.exists() {
             let _ = dotenvy::from_path(&global_env);
         }
+    }
+
+    // Support standard -v lowercase alias for --version
+    if env::args().any(|a| a == "-v") {
+        println!("acode {}-industrial", env!("CARGO_PKG_VERSION"));
+        return;
     }
 
     let args = CliArgs::parse();

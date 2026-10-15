@@ -19,8 +19,8 @@ impl TuiRenderer {
         let border = "=".repeat(78);
         println!("\n{}{}{}", Self::CYAN, border, Self::RESET);
         println!(
-            "{}{}  ATLAS DAEDALUS (acode){}  {}v1.0.5-industrial · Native Rust Engine · Atlas Research Labs{}",
-            Self::BOLD, Self::WHITE, Self::RESET, Self::DIM, Self::RESET
+            "{}{}  ATLAS DAEDALUS (acode){}  {}v{}-industrial · Native Rust Engine · Atlas Research Labs{}",
+            Self::BOLD, Self::WHITE, Self::RESET, Self::DIM, env!("CARGO_PKG_VERSION"), Self::RESET
         );
         println!("{}  Workspace: {}{}{}", Self::DIM, Self::WHITE, workspace_root, Self::RESET);
         let sec_color = match security {

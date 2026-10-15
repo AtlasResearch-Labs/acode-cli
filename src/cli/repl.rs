@@ -25,7 +25,7 @@ impl DaedalusREPL {
             });
 
         let status = self.orchestrator.tools.git.get_status().await;
-        let git_info = if !status.branch.is_empty() && status.branch != "detached" {
+        let git_info = if !status.branch.is_empty() && status.branch != "detached" && status.branch != "unknown" {
             let dirty = if status.clean { "" } else { "*" };
             format!(" ({}{})", status.branch, dirty)
         } else {

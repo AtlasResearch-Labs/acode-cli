@@ -26,7 +26,7 @@ impl GitTools {
         let res = self.shell.run_command("git status --short --branch", None).await;
         if !res.success {
             return GitStatusResult {
-                branch: "unknown".to_string(),
+                branch: String::new(),
                 clean: true,
                 modified: Vec::new(),
                 untracked: Vec::new(),

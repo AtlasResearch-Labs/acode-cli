@@ -142,6 +142,49 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/key" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.len() < 2 {
+                    println!("{}Usage: /key <provider> <api_key>{}\n  Providers: gemini, anthropic, openai, powerbox\n", TuiRenderer::RED, TuiRenderer::RESET);
+                    return true;
+                }
+                let provider = parts[0].to_lowercase();
+                let key = parts[1];
+
+                orchestrator.provider.config.api_key = Some(key.to_string());
+                orchestrator.provider.config.provider = provider.clone();
+
+                if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+                    let daedalus_dir = std::path::PathBuf::from(home).join(".daedalus");
+                    let _ = std::fs::create_dir_all(&daedalus_dir);
+                    let env_file = daedalus_dir.join(".env");
+                    let var_name = match provider.as_str() {
+                        "gemini" => "GEMINI_API_KEY",
+                        "anthropic" => "ANTHROPIC_API_KEY",
+                        "openai" => "OPENAI_API_KEY",
+                        "powerbox" => "POWERBOX_API_KEY",
+                        _ => "AI_API_KEY",
+                    };
+                    let mut existing = std::fs::read_to_string(&env_file).unwrap_or_default();
+                    if existing.contains(var_name) {
+                        let lines: Vec<String> = existing.lines().map(|l| {
+                            if l.starts_with(var_name) {
+                                format!("{}={}", var_name, key)
+                            } else {
+                                l.to_string()
+                            }
+                        }).collect();
+                        existing = lines.join("\n") + "\n";
+                    } else {
+                        existing.push_str(&format!("{}={}\n", var_name, key));
+                    }
+                    let _ = std::fs::write(&env_file, existing);
+                    println!("{}[OK] Saved '{}' key to ~/.daedalus/.env{}\n", TuiRenderer::GREEN, provider, TuiRenderer::RESET);
+                } else {
+                    println!("{}[OK] Updated '{}' key for current session.{}\n", TuiRenderer::GREEN, provider, TuiRenderer::RESET);
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -161,6 +204,7 @@ impl SlashCommandHandler {
         println!("  {}/tunnel <port>{}  - Spawn a public HTTPS Beacon tunnel", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/pulse{}           - View live OS host memory and CPU metrics", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/model <name>{}   - Switch active LLM model", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/key <p> <key>{}   - Configure API key (gemini, anthropic, openai, powerbox)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/clear{}           - Clear console and reset conversational context", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/exit{}            - Terminate REPL session\n", TuiRenderer::CYAN, TuiRenderer::RESET);
     }

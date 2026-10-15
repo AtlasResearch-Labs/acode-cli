@@ -43,6 +43,14 @@ struct CliArgs {
 async fn main() {
     let _ = dotenvy::dotenv();
 
+    // Global fallback from ~/.daedalus/.env
+    if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
+        let global_env = std::path::PathBuf::from(home).join(".daedalus").join(".env");
+        if global_env.exists() {
+            let _ = dotenvy::from_path(&global_env);
+        }
+    }
+
     let args = CliArgs::parse();
     let workspace_root = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 

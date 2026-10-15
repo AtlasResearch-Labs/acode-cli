@@ -1,0 +1,33 @@
+{
+  "name": "acode-cli",
+  "version": "1.0.0",
+  "description": "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Pure Rust Engine)",
+  "main": "index.js",
+  "bin": {
+    "acode": "bin/acode.js",
+    "daedalus": "bin/acode.js"
+  },
+  "scripts": {
+    "test": "node bin/acode.js --version"
+  },
+  "keywords": [
+    "ai-agent",
+    "coder",
+    "claude-code-alternative",
+    "codex",
+    "terminal-ai",
+    "autonomous-agent",
+    "rust",
+    "atlas-research-labs"
+  ],
+  "author": "Eren Yeager <victor@atlasresearchlabs.online>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AtlasResearch-Labs/Atlas-Daedalus.git"
+  },
+  "homepage": "https://atlasresearchlabs.online",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

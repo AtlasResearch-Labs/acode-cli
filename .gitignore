@@ -5,3 +5,5 @@ Cargo.lock
 .chronicle/
 .daedalus/
 .helix/
+npm/bin/native/
+*.tgz

@@ -107,13 +107,18 @@ impl FsTools {
                 continue;
             }
 
-            if let Ok(rel) = p.strip_prefix(&self.workspace_root) {
-                let s = rel.to_string_lossy().replace('\\', "/");
-                if p.is_dir() {
-                    results.push(format!("{}/", s));
-                } else {
-                    results.push(s);
-                }
+            let rel_str = if let Ok(rel) = p.strip_prefix(&full_path) {
+                rel.to_string_lossy().replace('\\', "/")
+            } else if let Ok(rel) = p.strip_prefix(&self.workspace_root) {
+                rel.to_string_lossy().replace('\\', "/")
+            } else {
+                p.to_string_lossy().replace('\\', "/")
+            };
+
+            if p.is_dir() {
+                results.push(format!("{}/", rel_str));
+            } else {
+                results.push(rel_str);
             }
 
             if results.len() >= 200 {
@@ -146,14 +151,19 @@ impl FsTools {
             }
 
             if let Ok(content) = fs::read_to_string(p) {
-                if let Ok(rel) = p.strip_prefix(&self.workspace_root) {
-                    let file_str = rel.to_string_lossy().replace('\\', "/");
-                    for (idx, line) in content.lines().enumerate() {
-                        if regex.is_match(line) {
-                            matches.push(format!("{}:{}: {}", file_str, idx + 1, line.trim()));
-                            if matches.len() >= 50 {
-                                break;
-                            }
+                let file_str = if let Ok(rel) = p.strip_prefix(&full_path) {
+                    rel.to_string_lossy().replace('\\', "/")
+                } else if let Ok(rel) = p.strip_prefix(&self.workspace_root) {
+                    rel.to_string_lossy().replace('\\', "/")
+                } else {
+                    p.to_string_lossy().replace('\\', "/")
+                };
+
+                for (idx, line) in content.lines().enumerate() {
+                    if regex.is_match(line) {
+                        matches.push(format!("{}:{}: {}", file_str, idx + 1, line.trim()));
+                        if matches.len() >= 50 {
+                            break;
                         }
                     }
                 }

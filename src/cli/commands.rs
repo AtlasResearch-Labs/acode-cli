@@ -223,6 +223,117 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/cd" => {
+                if arg.is_empty() {
+                    println!("{}Usage: /cd <directory_path | @alias>{}\n  Example: /cd F:\\projects\\Atlas-Research-Labs\n  Example: /cd @labs\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    return true;
+                }
+
+                let target_path_str = if arg.starts_with('@') {
+                    let alias = &arg[1..];
+                    let bookmarks = Self::load_bookmarks();
+                    match bookmarks.get(alias) {
+                        Some(p) => p.clone(),
+                        None => {
+                            println!("{}[FAIL] Unknown bookmark alias: @{}{}\nUse /bookmark to list saved project aliases.\n", TuiRenderer::RED, alias, TuiRenderer::RESET);
+                            return true;
+                        }
+                    }
+                } else {
+                    arg.to_string()
+                };
+
+                let target = std::path::Path::new(&target_path_str);
+                let new_path = if target.is_absolute() {
+                    target.to_path_buf()
+                } else {
+                    orchestrator.workspace_root.join(target)
+                };
+
+                if !new_path.exists() {
+                    println!("{}[FAIL] Directory does not exist: {}{}\n", TuiRenderer::RED, new_path.display(), TuiRenderer::RESET);
+                    return true;
+                }
+
+                if !new_path.is_dir() {
+                    println!("{}[FAIL] Path is not a directory: {}{}\n", TuiRenderer::RED, new_path.display(), TuiRenderer::RESET);
+                    return true;
+                }
+
+                let canonical = new_path.canonicalize().unwrap_or(new_path);
+                orchestrator.set_workspace(canonical.clone());
+                println!("{}[OK] Switched active workspace to: {}{}\n", TuiRenderer::GREEN, canonical.display(), TuiRenderer::RESET);
+                true
+            }
+            "/bookmark" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                let mut bookmarks = Self::load_bookmarks();
+
+                if parts.is_empty() {
+                    if bookmarks.is_empty() {
+                        println!("{}No bookmarks saved yet. Use: /bookmark add <alias> [path]{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                    } else {
+                        println!("\n{}[SAVED WORKSPACE BOOKMARKS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                        for (alias, path) in &bookmarks {
+                            println!("  {}{}@{}{} -> {}", TuiRenderer::CYAN, TuiRenderer::BOLD, alias, TuiRenderer::RESET, path);
+                        }
+                        println!("\nUsage: /cd @<alias>\n");
+                    }
+                    return true;
+                }
+
+                match parts[0].to_lowercase().as_str() {
+                    "add" => {
+                        if parts.len() < 2 {
+                            println!("{}Usage: /bookmark add <alias> [path]{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        let alias = parts[1].trim_start_matches('@').to_string();
+                        let path = if parts.len() > 2 {
+                            parts[2..].join(" ")
+                        } else {
+                            orchestrator.workspace_root.to_string_lossy().to_string()
+                        };
+                        bookmarks.insert(alias.clone(), path.clone());
+                        Self::save_bookmarks(&bookmarks);
+                        println!("{}[OK] Bookmarked @{} -> {}{}\n", TuiRenderer::GREEN, alias, path, TuiRenderer::RESET);
+                    }
+                    "remove" | "rm" => {
+                        if parts.len() < 2 {
+                            println!("{}Usage: /bookmark remove <alias>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        let alias = parts[1].trim_start_matches('@');
+                        if bookmarks.remove(alias).is_some() {
+                            Self::save_bookmarks(&bookmarks);
+                            println!("{}[OK] Removed bookmark @{}{}\n", TuiRenderer::GREEN, alias, TuiRenderer::RESET);
+                        } else {
+                            println!("{}[FAIL] Bookmark @{} not found.{}\n", TuiRenderer::RED, alias, TuiRenderer::RESET);
+                        }
+                    }
+                    _ => {
+                        println!("{}Usage: /bookmark [add <alias> [path] | remove <alias>]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
+            "/history" => {
+                if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+                    let history_path = std::path::PathBuf::from(home).join(".daedalus").join("history.txt");
+                    if let Ok(content) = std::fs::read_to_string(history_path) {
+                        let lines: Vec<&str> = content.lines().collect();
+                        let start_idx = if lines.len() > 15 { lines.len() - 15 } else { 0 };
+                        println!("\n{}[RECENT COMMAND HISTORY]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                        for (idx, line) in lines[start_idx..].iter().enumerate() {
+                            println!("  {:2}. {}", start_idx + idx + 1, line);
+                        }
+                        println!();
+                    } else {
+                        println!("{}No command history recorded yet.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -231,11 +342,37 @@ impl SlashCommandHandler {
         }
     }
 
+    fn load_bookmarks() -> std::collections::HashMap<String, String> {
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let p = std::path::PathBuf::from(home).join(".daedalus").join("bookmarks.json");
+            if let Ok(content) = std::fs::read_to_string(p) {
+                if let Ok(map) = serde_json::from_str(&content) {
+                    return map;
+                }
+            }
+        }
+        std::collections::HashMap::new()
+    }
+
+    fn save_bookmarks(bookmarks: &std::collections::HashMap<String, String>) {
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let dir = std::path::PathBuf::from(home).join(".daedalus");
+            let _ = std::fs::create_dir_all(&dir);
+            let p = dir.join("bookmarks.json");
+            if let Ok(content) = serde_json::to_string_pretty(bookmarks) {
+                let _ = std::fs::write(p, content);
+            }
+        }
+    }
+
     fn print_help() {
         println!("\n{}[ATLAS DAEDALUS COMMANDS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
         println!("  {}/help{}            - Show this command reference", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/info{}            - Display active workspace root, git branch, and context", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/cd <path|@alias>{} - Switch active workspace root directory", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/bookmark{}        - Manage saved workspace aliases (/bookmark add/remove)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/history{}         - Display recent command history", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/undo{}            - Revert all uncommitted working tree changes", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/diff{}            - Inspect working tree git diff", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/status{}          - Display git repository status", TuiRenderer::CYAN, TuiRenderer::RESET);

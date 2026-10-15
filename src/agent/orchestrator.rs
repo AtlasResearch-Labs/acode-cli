@@ -58,17 +58,35 @@ impl DaedalusOrchestrator {
             CORE OPERATIONAL LAWS:\n\
             1. ZERO EMOJI POLICY: NEVER output emojis anywhere. Use clean brackets or text labels like [OK], [FAIL], [PLAN], [TEST], [DIFF].\n\
             2. SOVEREIGN DEMEANOR: NEVER say 'I am an AI language model', 'As an AI', or give generic disclaimers. You are an autonomous software engineer running directly on the user's terminal.\n\
-            3. WORKSPACE SITUATIONAL AWARENESS: You operate strictly within the workspace root: {}.\n\
-               If the user asks what file you are working on, state your active workspace root, note whether you currently have any files staged or modified, and confirm you are ready for a target file or task.\n\
+            3. WORKSPACE SITUATIONAL AWARENESS: Your active base workspace is: {}.\n\
+               You have UNRESTRICTED SYSTEM ACCESS to inspect, read, search, list, and modify any file, directory, or drive (e.g. C:\\, D:\\, F:\\) the user requests.\n\
+               NEVER claim you are confined, sandboxed, or lack permissions to access external drives or paths. If the user asks to see, inspect, or navigate to another directory or drive, execute their request immediately.\n\
+               If the user asks to switch, cd into, or get into another directory, call the 'change_workspace' tool immediately.\n\
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely without unnecessary filler or tool overhead.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, git_status, git_diff, argus_audit, beacon_tunnel.\n\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel.\n\n\
             WORKSPACE ROOT: {}\n{}",
             self.workspace_root.display(),
             self.workspace_root.display(),
             if mem.is_empty() { String::new() } else { format!("\nPROJECT MEMORY:\n{}", mem) }
         )
+    }
+
+    pub fn set_workspace(&mut self, new_root: PathBuf) {
+        self.workspace_root = new_root.clone();
+        self.tools = ToolRegistry::new(&new_root);
+        self.memory = MemoryEngine::new(&new_root);
+        self.chronicle = ChronicleTracer::new(&new_root);
+        self.verifier = SelfHealingVerifier::new(&new_root);
+        self.compressor = TrajectoryCompressor::new(60000);
+
+        let new_prompt = self.build_system_prompt();
+        if let Some(first) = self.history.first_mut() {
+            if first.role == "system" {
+                first.content = new_prompt;
+            }
+        }
     }
 
     pub async fn run_plan<F>(&mut self, goal: &str, on_event: F) -> Result<String, String>
@@ -201,7 +219,31 @@ impl DaedalusOrchestrator {
                     }
                 }
 
-                let (success, output) = self.tools.execute_tool(&call.name, &call.arguments).await;
+                let (success, output) = if call.name == "change_workspace" {
+                    let target_str = call.arguments.get("path")
+                        .or_else(|| call.arguments.get("dir"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let target = std::path::Path::new(target_str);
+                    let resolved = if target.is_absolute() {
+                        target.to_path_buf()
+                    } else {
+                        self.workspace_root.join(target)
+                    };
+
+                    if !resolved.exists() {
+                        (false, format!("Directory does not exist: {}", target_str))
+                    } else if !resolved.is_dir() {
+                        (false, format!("Path is not a directory: {}", target_str))
+                    } else {
+                        let final_path = resolved.canonicalize().unwrap_or(resolved);
+                        self.set_workspace(final_path.clone());
+                        let git_status = self.tools.git.get_status().await;
+                        (true, format!("Successfully switched active workspace root to: {} (Git branch: {}, clean: {})", final_path.display(), git_status.branch, git_status.clean))
+                    }
+                } else {
+                    self.tools.execute_tool(&call.name, &call.arguments).await
+                };
                 on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
 
                 self.history.push(LLMMessage {

@@ -16,6 +16,47 @@ impl DaedalusREPL {
         Self { orchestrator }
     }
 
+    async fn render_prompt(&self) -> String {
+        let folder_name = self.orchestrator.workspace_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| {
+                self.orchestrator.workspace_root.to_str().unwrap_or("root")
+            });
+
+        let status = self.orchestrator.tools.git.get_status().await;
+        let git_info = if !status.branch.is_empty() && status.branch != "detached" {
+            let dirty = if status.clean { "" } else { "*" };
+            format!(" ({}{})", status.branch, dirty)
+        } else {
+            String::new()
+        };
+
+        format!(
+            "{}{}daedalus {}{}[{}{}{}]{}>{} ",
+            TuiRenderer::BOLD,
+            TuiRenderer::CYAN,
+            TuiRenderer::RESET,
+            TuiRenderer::DIM,
+            folder_name,
+            TuiRenderer::GREEN,
+            git_info,
+            TuiRenderer::CYAN,
+            TuiRenderer::RESET
+        )
+    }
+
+    fn append_history(line: &str) {
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let daedalus_dir = std::path::PathBuf::from(home).join(".daedalus");
+            let _ = std::fs::create_dir_all(&daedalus_dir);
+            let history_path = daedalus_dir.join("history.txt");
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&history_path) {
+                let _ = writeln!(file, "{}", line);
+            }
+        }
+    }
+
     pub async fn start(&mut self) {
         let root = self.orchestrator.workspace_root.to_string_lossy().to_string();
         let model = self.orchestrator.provider.config.model.clone();
@@ -27,7 +68,8 @@ impl DaedalusREPL {
         let mut reader = BufReader::new(stdin).lines();
 
         loop {
-            print!("{}{}daedalus>{} ", TuiRenderer::BOLD, TuiRenderer::CYAN, TuiRenderer::RESET);
+            let prompt_str = self.render_prompt().await;
+            print!("{}", prompt_str);
             let _ = io::stdout().flush();
 
             match reader.next_line().await {
@@ -36,6 +78,8 @@ impl DaedalusREPL {
                     if trimmed.is_empty() {
                         continue;
                     }
+
+                    Self::append_history(trimmed);
 
                     if trimmed.starts_with('/') {
                         if SlashCommandHandler::handle(trimmed, &mut self.orchestrator).await {

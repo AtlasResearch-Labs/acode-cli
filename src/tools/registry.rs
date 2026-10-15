@@ -130,6 +130,17 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "change_workspace".to_string(),
+                description: "Switch active workspace root directory across any drive (e.g. F:\\projects\\Atlas-Research-Labs or relative path). Updates project tools, git context, memory, and verification to the target directory.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Absolute or relative target directory path to switch into" }
+                    },
+                    "required": ["path"]
+                }),
+            },
+            ToolDefinition {
                 name: "argus_audit".to_string(),
                 description: "Run Argus AST code review and secret scan on files.".to_string(),
                 parameters: serde_json::json!({
@@ -158,7 +169,11 @@ impl ToolRegistry {
     pub async fn execute_tool(&self, name: &str, args: &Value) -> (bool, String) {
         match name {
             "view_file" => {
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let path = args.get("path")
+                    .or_else(|| args.get("file"))
+                    .or_else(|| args.get("file_path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let start_line = args.get("start_line").and_then(|v| v.as_u64()).map(|n| n as usize);
                 let end_line = args.get("end_line").and_then(|v| v.as_u64()).map(|n| n as usize);
 
@@ -168,7 +183,10 @@ impl ToolRegistry {
                 }
             }
             "patch_file" => {
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let path = args.get("path")
+                    .or_else(|| args.get("file"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let target = args.get("target_content").and_then(|v| v.as_str()).unwrap_or("");
                 let rep = args.get("replacement_content").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -178,7 +196,10 @@ impl ToolRegistry {
                 }
             }
             "write_file" => {
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let path = args.get("path")
+                    .or_else(|| args.get("file"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
                 match self.fs.write_file(path, content) {
@@ -202,28 +223,47 @@ impl ToolRegistry {
                 (res.success, out)
             }
             "list_dir" => {
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                let path = args.get("path")
+                    .or_else(|| args.get("dir"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(".");
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
 
                 match self.fs.list_dir(path, recursive) {
-                    Ok(files) => (true, files.join("\n")),
+                    Ok(files) => {
+                        if files.is_empty() {
+                            (true, format!("(directory is empty or all items ignored: {})", path))
+                        } else {
+                            (true, files.join("\n"))
+                        }
+                    }
                     Err(e) => (false, e),
                 }
             }
             "search_code" => {
-                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                let dir = args.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
+                let query = args.get("query")
+                    .or_else(|| args.get("pattern"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let dir = args.get("dir")
+                    .or_else(|| args.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(".");
 
                 match self.fs.search_code(query, dir) {
                     Ok(matches) => {
                         if matches.is_empty() {
-                            (true, "No matches found.".to_string())
+                            (true, format!("No matches found for '{}' in {}.", query, dir))
                         } else {
                             (true, matches.join("\n"))
                         }
                     }
                     Err(e) => (false, e),
                 }
+            }
+            "change_workspace" => {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                (true, format!("Workspace switch requested for: {}", path))
             }
             "git_status" => {
                 let status = self.git.get_status().await;

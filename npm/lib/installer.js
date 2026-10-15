@@ -3,35 +3,51 @@ const path = require('path');
 const https = require('https');
 
 function getPlatformKey() {
-  const platform = process.platform === 'android' ? 'linux' : process.platform;
+  const isAndroid = process.platform === 'android';
+  const platform = process.platform;
   let arch = process.arch;
   if (arch === 'arm' || arch === 'arm64' || arch === 'aarch64') {
     arch = 'arm64';
   } else if (arch === 'x64' || arch === 'x86_64') {
     arch = 'x64';
   }
-  return { platform, arch, key: `${platform}-${arch}` };
+  return { platform, arch, isAndroid, key: `${platform}-${arch}` };
 }
 
 function resolveExistingBinary(base) {
-  const { platform, arch, key } = getPlatformKey();
+  const { platform, arch, isAndroid, key } = getPlatformKey();
   const isWin = platform === 'win32';
 
-  const candidates = [
-    // 1. Exact platform-specific binary in npm/bin/native/
-    path.join(__dirname, '..', 'bin', 'native', `${base}-${platform}-${arch}${isWin ? '.exe' : ''}`),
-    path.join(__dirname, '..', 'bin', 'native', `${base}-${key}${isWin ? '.exe' : ''}`),
-    // 2. Generic binary name in bin/native/
+  const candidates = [];
+
+  if (isAndroid) {
+    // Android Bionic native targets (Termux)
+    candidates.push(
+      path.join(__dirname, '..', 'bin', 'native', `${base}-android-${arch}`),
+      path.join(__dirname, '..', 'bin', 'native', `${base}-android-arm64`),
+      path.join(__dirname, '..', 'bin', 'native', `${base}-linux-${arch}`)
+    );
+  } else {
+    // Desktop POSIX and Windows targets
+    candidates.push(
+      path.join(__dirname, '..', 'bin', 'native', `${base}-${platform}-${arch}${isWin ? '.exe' : ''}`),
+      path.join(__dirname, '..', 'bin', 'native', `${base}-${key}${isWin ? '.exe' : ''}`)
+    );
+  }
+
+  candidates.push(
+    // Generic binary name in bin/native/
     path.join(__dirname, '..', 'bin', 'native', isWin ? `${base}.exe` : base),
-    // 3. User global daedalus binary cache ~/.daedalus/bin/
+    // User global daedalus binary cache ~/.daedalus/bin/
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.daedalus', 'bin', isWin ? `${base}.exe` : base),
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.daedalus', 'bin', `${base}-${key}${isWin ? '.exe' : ''}`),
-    // 4. System cargo bin ~/.cargo/bin/
+    // System cargo bin ~/.cargo/bin/
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.cargo', 'bin', isWin ? `${base}.exe` : base),
-    // 5. Local workspace development target/release
+    // Local workspace development target/release
     path.resolve(__dirname, '..', '..', 'target', 'release', isWin ? `${base}.exe` : base),
+    path.resolve(__dirname, '..', '..', 'target', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-linux-android`, 'release', base),
     path.resolve(__dirname, '..', '..', 'target', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-gnu`, 'release', base)
-  ];
+  );
 
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {

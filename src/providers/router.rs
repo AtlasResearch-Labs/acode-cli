@@ -48,7 +48,7 @@ impl ProviderRouter {
         if let Ok(key) = env::var("GEMINI_API_KEY") {
             return ProviderConfig {
                 provider: "gemini".to_string(),
-                model: override_model.unwrap_or_else(|| env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.0-flash".to_string())),
+                model: override_model.unwrap_or_else(|| env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_string())),
                 api_key: Some(key),
                 base_url: None,
                 temperature: 0.2,
@@ -68,7 +68,7 @@ impl ProviderRouter {
         if let Ok(key) = env::var("POWERBOX_API_KEY") {
             return ProviderConfig {
                 provider: "powerbox".to_string(),
-                model: override_model.unwrap_or_else(|| "gemini-2.0-flash".to_string()),
+                model: override_model.unwrap_or_else(|| "gemini-2.5-flash".to_string()),
                 api_key: Some(key),
                 base_url: Some("https://powerbox.atlasresearchlabs.online/v1".to_string()),
                 temperature: 0.2,
@@ -78,7 +78,7 @@ impl ProviderRouter {
         // Default to Gemini or Ollama
         ProviderConfig {
             provider: "gemini".to_string(),
-            model: override_model.unwrap_or_else(|| "gemini-2.0-flash".to_string()),
+            model: override_model.unwrap_or_else(|| "gemini-2.5-flash".to_string()),
             api_key: env::var("GEMINI_API_KEY").ok(),
             base_url: None,
             temperature: 0.2,

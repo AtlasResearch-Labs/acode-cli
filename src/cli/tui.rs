@@ -28,8 +28,8 @@ impl TuiRenderer {
             Self::DIM, Self::GREEN, provider, Self::RESET, Self::DIM, Self::CYAN, model, Self::RESET
         );
         println!(
-            "{}  Type {}/help{} for commands or enter any prompt to begin autonomous execution.{}{}",
-            Self::DIM, Self::WHITE, Self::RESET, Self::DIM, Self::RESET
+            "{}  Type {}/help{} for commands, {}!<cmd>{} for shell, or enter prompt to begin.{}",
+            Self::DIM, Self::WHITE, Self::RESET, Self::YELLOW, Self::RESET, Self::RESET
         );
         println!("{}{}{}\n", Self::CYAN, border, Self::RESET);
     }

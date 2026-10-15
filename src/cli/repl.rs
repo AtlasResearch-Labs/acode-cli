@@ -43,17 +43,34 @@ impl DaedalusREPL {
                         }
                     }
 
+                    // Direct shell command bypass with '!' prefix
+                    if trimmed.starts_with('!') {
+                        let shell_cmd = trimmed[1..].trim();
+                        if !shell_cmd.is_empty() {
+                            println!();
+                            let res = self.orchestrator.tools.shell.run_command(shell_cmd, None).await;
+                            if !res.stdout.is_empty() {
+                                print!("{}", res.stdout);
+                            }
+                            if !res.stderr.is_empty() {
+                                eprint!("{}", res.stderr);
+                            }
+                            println!();
+                            continue;
+                        }
+                    }
+
                     println!();
                     let res = self.orchestrator.run_task(trimmed, |event| match event {
                         AgentEvent::Thinking(s) => TuiRenderer::print_thinking(s),
                         AgentEvent::ToolStart { name, args } => TuiRenderer::print_tool_start(name, args),
                         AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
                         AgentEvent::TestResult { command, passed, output } => TuiRenderer::print_test_result(command, passed, output),
-                        AgentEvent::Done { files_modified, .. } => {
-                            if files_modified.is_empty() {
-                                TuiRenderer::print_success("Task executed successfully.");
-                            } else {
+                        AgentEvent::Done { files_modified, tools_called, .. } => {
+                            if !files_modified.is_empty() {
                                 TuiRenderer::print_success(&format!("Modified: {}", files_modified.join(", ")));
+                            } else if tools_called > 0 {
+                                TuiRenderer::print_success("Task executed successfully.");
                             }
                         }
                         AgentEvent::Error(err) => TuiRenderer::print_error(err),

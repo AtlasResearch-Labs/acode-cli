@@ -17,7 +17,7 @@ pub enum AgentEvent<'a> {
     ToolStart { name: &'a str, args: &'a serde_json::Value },
     ToolEnd { name: &'a str, success: bool, output: &'a str },
     TestResult { command: &'a str, passed: bool, output: &'a str },
-    Done { summary: &'a str, files_modified: &'a [String] },
+    Done { summary: &'a str, files_modified: &'a [String], tools_called: usize },
     Error(&'a str),
 }
 
@@ -54,17 +54,43 @@ impl DaedalusOrchestrator {
     fn build_system_prompt(&self) -> String {
         let mem = self.memory.get_memory_context();
         format!(
-            "You are Atlas Daedalus (acode), a world-class autonomous terminal AI coding agent built by Atlas Research Labs.\n\n\
-            CORE OPERATIONAL RULES:\n\
+            "You are Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.\n\n\
+            CORE OPERATIONAL LAWS:\n\
             1. ZERO EMOJI POLICY: NEVER output emojis anywhere. Use clean brackets or text labels like [OK], [FAIL], [PLAN], [TEST], [DIFF].\n\
-            2. AUTONOMOUS VERIFICATION: When you make code modifications, always verify them. If a test or build fails, read the error output and repair the code until it passes.\n\
-            3. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
-            4. HONESTY AND CONCISENESS: Output clean, concise, high-density explanations.\n\
-            5. LOCAL ARCHITECTURE: You have direct access to tools (view_file, patch_file, write_file, run_command, list_dir, search_code, git_status, git_diff, argus_audit, beacon_tunnel).\n\n\
+            2. SOVEREIGN DEMEANOR: NEVER say 'I am an AI language model', 'As an AI', or give generic disclaimers. You are an autonomous software engineer running directly on the user's terminal.\n\
+            3. WORKSPACE SITUATIONAL AWARENESS: You operate strictly within the workspace root: {}.\n\
+               If the user asks what file you are working on, state your active workspace root, note whether you currently have any files staged or modified, and confirm you are ready for a target file or task.\n\
+            4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
+            5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
+            6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely without unnecessary filler or tool overhead.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, git_status, git_diff, argus_audit, beacon_tunnel.\n\n\
             WORKSPACE ROOT: {}\n{}",
+            self.workspace_root.display(),
             self.workspace_root.display(),
             if mem.is_empty() { String::new() } else { format!("\nPROJECT MEMORY:\n{}", mem) }
         )
+    }
+
+    pub async fn run_plan<F>(&mut self, goal: &str, on_event: F) -> Result<String, String>
+    where
+        F: FnMut(AgentEvent),
+    {
+        let prompt = format!(
+            "ARCHITECT PLANNING MODE:\n\
+            Analyze the following goal and produce a comprehensive, structured implementation plan.\n\
+            DO NOT modify any files. Use read-only tools (view_file, search_code, list_dir, git_status, git_diff) to inspect the codebase as needed.\n\n\
+            Structure your output as:\n\
+            [PLAN: ARCHITECT BLUEPRINT]\n\
+            1. OBJECTIVE & ARCHITECTURAL OVERVIEW\n\
+            2. AFFECTED FILES & DEPENDENCIES\n\
+            3. STEP-BY-STEP IMPLEMENTATION MILESTONES\n\
+            4. TEST & VERIFICATION STRATEGY\n\
+            5. POTENTIAL RISKS & EDGE CASES\n\n\
+            GOAL: {}",
+            goal
+        );
+
+        self.run_task(&prompt, on_event).await
     }
 
     pub async fn run_task<F>(&mut self, user_goal: &str, mut on_event: F) -> Result<String, String>
@@ -96,12 +122,15 @@ impl DaedalusOrchestrator {
         let mut turns = 0;
         let max_turns = 25;
         let mut final_summary = String::new();
+        let mut total_tools_called = 0;
 
         while turns < max_turns {
             turns += 1;
 
-            let thinking_status = format!("Autonomous turn {}...", turns);
-            on_event(AgentEvent::Thinking(&thinking_status));
+            if turns > 1 {
+                let thinking_status = format!("Autonomous turn {}...", turns);
+                on_event(AgentEvent::Thinking(&thinking_status));
+            }
 
             // Compress history
             let chat_msgs: Vec<ChatMessage> = self.history.iter().map(|m| ChatMessage {
@@ -156,6 +185,11 @@ impl DaedalusOrchestrator {
                     break;
                 }
             };
+
+            total_tools_called += tool_calls.len();
+            if turns == 1 {
+                on_event(AgentEvent::Thinking("Autonomous execution turn 1..."));
+            }
 
             // Execute each tool call
             for call in &tool_calls {
@@ -224,6 +258,7 @@ impl DaedalusOrchestrator {
         on_event(AgentEvent::Done {
             summary: &final_summary,
             files_modified: &modified_vec,
+            tools_called: total_tools_called,
         });
 
         Ok(final_summary)

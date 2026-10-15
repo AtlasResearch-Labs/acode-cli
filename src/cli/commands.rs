@@ -1,6 +1,4 @@
-//! Atlas Daedalus — Slash Command Router
-
-use crate::agent::orchestrator::DaedalusOrchestrator;
+use crate::agent::orchestrator::{AgentEvent, DaedalusOrchestrator};
 use crate::cli::tui::TuiRenderer;
 
 pub struct SlashCommandHandler;
@@ -185,6 +183,46 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/plan" => {
+                if arg.is_empty() {
+                    println!("{}Usage: /plan <goal or feature to architect>{}\n  Example: /plan implement JWT authentication in src/auth.rs\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    return true;
+                }
+                println!("\n{}[ARCHITECT MODE]{} Generating implementation plan for: {}{}{}\n", TuiRenderer::BOLD, TuiRenderer::RESET, TuiRenderer::CYAN, arg, TuiRenderer::RESET);
+                let _ = orchestrator.run_plan(arg, |event| match event {
+                    AgentEvent::Thinking(s) => TuiRenderer::print_thinking(s),
+                    AgentEvent::ToolStart { name, args } => TuiRenderer::print_tool_start(name, args),
+                    AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
+                    AgentEvent::Error(err) => TuiRenderer::print_error(err),
+                    _ => {}
+                }).await;
+                println!("{}[OK] Plan generated. To execute this plan, prompt Daedalus to proceed.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                true
+            }
+            "/info" => {
+                let status = orchestrator.tools.git.get_status().await;
+                let traces = orchestrator.chronicle.get_recent_traces(1);
+                let last_tokens = traces.first().map(|t| t.tokens.total).unwrap_or(0);
+                let last_cost = traces.first().map(|t| t.cost_usd).unwrap_or(0.0);
+
+                println!("\n{}[WORKSPACE SITUATIONAL CONTEXT]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                println!("  Workspace Root: {}{}{}", TuiRenderer::CYAN, orchestrator.workspace_root.display(), TuiRenderer::RESET);
+                println!("  Git Branch:     {}{}{}", TuiRenderer::CYAN, status.branch, TuiRenderer::RESET);
+                println!("  Working Tree:   {}", if status.clean { format!("{}[CLEAN]{}", TuiRenderer::GREEN, TuiRenderer::RESET) } else { format!("{}[DIRTY: {} modified]{}", TuiRenderer::YELLOW, status.modified.len(), TuiRenderer::RESET) });
+                println!("  Provider/Model: {} ({})", orchestrator.provider.config.provider, orchestrator.provider.config.model);
+                println!("  Last Turn Cost: {} tokens (${:.5})\n", last_tokens, last_cost);
+                true
+            }
+            "/undo" => {
+                println!("{}[ACODE] Reverting uncommitted working tree changes...{}", TuiRenderer::YELLOW, TuiRenderer::RESET);
+                let res = orchestrator.tools.shell.run_command("git checkout -- .", None).await;
+                if res.success {
+                    println!("{}[OK] Working tree restored to previous clean git commit.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                } else {
+                    println!("{}[FAIL] Revert failed: {}{}\n", TuiRenderer::RED, res.stderr, TuiRenderer::RESET);
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -196,6 +234,9 @@ impl SlashCommandHandler {
     fn print_help() {
         println!("\n{}[ATLAS DAEDALUS COMMANDS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
         println!("  {}/help{}            - Show this command reference", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/info{}            - Display active workspace root, git branch, and context", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/undo{}            - Revert all uncommitted working tree changes", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/diff{}            - Inspect working tree git diff", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/status{}          - Display git repository status", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/commit <msg>{}    - Commit all changes with standard author", TuiRenderer::CYAN, TuiRenderer::RESET);
@@ -206,6 +247,7 @@ impl SlashCommandHandler {
         println!("  {}/model <name>{}   - Switch active LLM model", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/key <p> <key>{}   - Configure API key (gemini, anthropic, openai, powerbox)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/clear{}           - Clear console and reset conversational context", TuiRenderer::CYAN, TuiRenderer::RESET);
-        println!("  {}/exit{}            - Terminate REPL session\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/exit{}            - Terminate REPL session", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}!<command>{}        - Direct shell execution bypass (e.g. !git status, !dir)\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
     }
 }

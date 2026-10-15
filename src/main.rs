@@ -78,11 +78,11 @@ async fn main() {
             AgentEvent::ToolStart { name, args } => TuiRenderer::print_tool_start(name, args),
             AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
             AgentEvent::TestResult { command, passed, output } => TuiRenderer::print_test_result(command, passed, output),
-            AgentEvent::Done { files_modified, .. } => {
-                if files_modified.is_empty() {
-                    TuiRenderer::print_success("Task executed successfully.");
-                } else {
+            AgentEvent::Done { files_modified, tools_called, .. } => {
+                if !files_modified.is_empty() {
                     TuiRenderer::print_success(&format!("Modified: {}", files_modified.join(", ")));
+                } else if tools_called > 0 {
+                    TuiRenderer::print_success("Task executed successfully.");
                 }
             }
             AgentEvent::Error(err) => TuiRenderer::print_error(err),

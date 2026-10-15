@@ -1,12 +1,17 @@
 {
   "name": "acode-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Pure Rust Engine)",
   "main": "index.js",
   "bin": {
     "acode": "bin/acode.js",
     "daedalus": "bin/acode.js"
   },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
   "scripts": {
     "test": "node bin/acode.js --version"
   },

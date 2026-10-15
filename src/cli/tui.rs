@@ -1,0 +1,103 @@
+//! Atlas Daedalus — TUI Renderer (ANSI / OLED Black)
+
+pub struct TuiRenderer;
+
+impl TuiRenderer {
+    pub const RESET: &'static str = "\x1b[0m";
+    pub const BOLD: &'static str = "\x1b[1m";
+    pub const DIM: &'static str = "\x1b[2m";
+
+    pub const RED: &'static str = "\x1b[31m";
+    pub const GREEN: &'static str = "\x1b[32m";
+    pub const YELLOW: &'static str = "\x1b[33m";
+    pub const MAGENTA: &'static str = "\x1b[35m";
+    pub const CYAN: &'static str = "\x1b[36m";
+    pub const WHITE: &'static str = "\x1b[37m";
+    pub const GRAY: &'static str = "\x1b[90m";
+
+    pub fn print_header(workspace_root: &str, model: &str, provider: &str) {
+        let border = "=".repeat(78);
+        println!("\n{}{}{}", Self::CYAN, border, Self::RESET);
+        println!(
+            "{}{}  ATLAS DAEDALUS (acode){}  {}v1.0.0-industrial · Native Rust Engine · Atlas Research Labs{}",
+            Self::BOLD, Self::WHITE, Self::RESET, Self::DIM, Self::RESET
+        );
+        println!("{}  Workspace: {}{}{}", Self::DIM, Self::WHITE, workspace_root, Self::RESET);
+        println!(
+            "{}  Provider:  {}{}{}  {}Model: {}{}{}",
+            Self::DIM, Self::GREEN, provider, Self::RESET, Self::DIM, Self::CYAN, model, Self::RESET
+        );
+        println!(
+            "{}  Type {}/help{} for commands or enter any prompt to begin autonomous execution.{}{}",
+            Self::DIM, Self::WHITE, Self::RESET, Self::DIM, Self::RESET
+        );
+        println!("{}{}{}\n", Self::CYAN, border, Self::RESET);
+    }
+
+    pub fn print_thinking(status: &str) {
+        print!("\r{}[ACODE] {}{}", Self::DIM, status, Self::RESET);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
+
+    pub fn print_tool_start(name: &str, args: &serde_json::Value) {
+        let compact = args.to_string();
+        let trimmed = if compact.len() > 80 {
+            format!("{}...", &compact[..77])
+        } else {
+            compact
+        };
+        println!(
+            "\n{}[TOOL CALL]{} {}{}{} {}{}{}",
+            Self::MAGENTA, Self::RESET, Self::BOLD, name, Self::RESET, Self::DIM, trimmed, Self::RESET
+        );
+    }
+
+    pub fn print_tool_end(name: &str, success: bool, output: &str) {
+        let tag = if success {
+            format!("{}[OK]{}", Self::GREEN, Self::RESET)
+        } else {
+            format!("{}[FAIL]{}", Self::RED, Self::RESET)
+        };
+        let preview = if output.len() > 300 {
+            format!("{}...", &output[..297])
+        } else {
+            output.to_string()
+        };
+        println!("{} {}{} output:{}\n{}{}{}", tag, Self::DIM, name, Self::RESET, Self::GRAY, preview, Self::RESET);
+    }
+
+    pub fn print_test_result(command: &str, passed: bool, output: &str) {
+        let tag = if passed {
+            format!("{}{}[VERIFICATION PASSED]{}", Self::BOLD, Self::GREEN, Self::RESET)
+        } else {
+            format!("{}{}[VERIFICATION FAILED]{}", Self::BOLD, Self::RED, Self::RESET)
+        };
+        println!("\n{} {}{}{}", tag, Self::CYAN, command, Self::RESET);
+        if !passed {
+            let snippet = if output.len() > 500 { &output[..500] } else { output };
+            println!("{}{}{}", Self::RED, snippet, Self::RESET);
+        }
+    }
+
+    pub fn print_diff(diff_text: &str) {
+        for line in diff_text.lines() {
+            if line.starts_with('+') {
+                println!("{}{}{}", Self::GREEN, line, Self::RESET);
+            } else if line.starts_with('-') {
+                println!("{}{}{}", Self::RED, line, Self::RESET);
+            } else if line.starts_with("@@") {
+                println!("{}{}{}", Self::CYAN, line, Self::RESET);
+            } else {
+                println!("{}{}{}", Self::GRAY, line, Self::RESET);
+            }
+        }
+    }
+
+    pub fn print_success(message: &str) {
+        println!("\n{}[COMPLETED]{} {}\n", Self::GREEN, Self::RESET, message);
+    }
+
+    pub fn print_error(message: &str) {
+        println!("\n{}[ERROR]{} {}\n", Self::RED, Self::RESET, message);
+    }
+}

@@ -1,0 +1,74 @@
+//! Atlas Daedalus — Async Shell Tools
+
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+use tokio::process::Command;
+
+#[derive(Debug, Clone)]
+pub struct ExecResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub duration_ms: u128,
+}
+
+pub struct ShellTools {
+    workspace_root: PathBuf,
+}
+
+impl ShellTools {
+    pub fn new<P: AsRef<Path>>(workspace_root: P) -> Self {
+        Self {
+            workspace_root: workspace_root.as_ref().to_path_buf(),
+        }
+    }
+
+    pub async fn run_command(&self, command: &str, cwd: Option<&str>) -> ExecResult {
+        let start = Instant::now();
+        let target_cwd = match cwd {
+            Some(d) => Path::new(d).to_path_buf(),
+            None => self.workspace_root.clone(),
+        };
+
+        let is_win = cfg!(target_os = "windows");
+        let mut cmd = if is_win {
+            let mut c = Command::new("powershell.exe");
+            c.arg("-NoProfile").arg("-Command").arg(command);
+            c
+        } else {
+            let mut c = Command::new("/bin/sh");
+            c.arg("-c").arg(command);
+            c
+        };
+
+        cmd.current_dir(target_cwd);
+
+        match cmd.output().await {
+            Ok(output) => {
+                let duration_ms = start.elapsed().as_millis();
+                let exit_code = output.status.code().unwrap_or(1);
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+                ExecResult {
+                    success: exit_code == 0,
+                    stdout,
+                    stderr,
+                    exit_code,
+                    duration_ms,
+                }
+            }
+            Err(e) => {
+                let duration_ms = start.elapsed().as_millis();
+                ExecResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: format!("Failed to spawn process: {}", e),
+                    exit_code: 1,
+                    duration_ms,
+                }
+            }
+        }
+    }
+}

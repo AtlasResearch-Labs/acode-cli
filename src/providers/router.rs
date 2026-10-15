@@ -17,7 +17,8 @@ impl ProviderRouter {
     pub fn new(override_model: Option<String>, override_provider: Option<String>) -> Self {
         let config = Self::resolve_config(override_model, override_provider);
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(std::time::Duration::from_secs(45))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| Client::new());
 
@@ -31,7 +32,11 @@ impl ProviderRouter {
 
         let get_powerbox_key = || env::var("POWERBOX_API_KEY").or_else(|_| env::var("POWERBOX_MASTER_KEY")).ok();
         let get_powerbox_base = || env::var("POWERBOX_BASE_URL").unwrap_or_else(|_| "https://powerbox.atlasresearchlabs.online/v1".to_string());
-        let get_powerbox_model = |ov: Option<String>| ov.or_else(|| env::var("POWERBOX_MODEL").ok()).unwrap_or_else(|| "auto".to_string());
+        let get_powerbox_model = |ov: Option<String>| ov
+            .or_else(|| env::var("DAEDALUS_MODEL").ok())
+            .or_else(|| env::var("POWERBOX_MODEL").ok())
+            .or_else(|| env::var("DEFAULT_MODEL").ok())
+            .unwrap_or_else(|| "auto".to_string());
 
         // 1. Explicit provider requested
         if let Some(p) = requested_provider {
@@ -484,8 +489,12 @@ impl ProviderRouter {
 
         let choice = json_resp.get("choices").and_then(|c| c.get(0));
         let message = choice.and_then(|c| c.get("message"));
-
-        let text = message.and_then(|m| m.get("content")).and_then(|c| c.as_str()).unwrap_or("").to_string();
+        let mut text = message.and_then(|m| m.get("content")).and_then(|c| c.as_str()).unwrap_or("").to_string();
+        if text.is_empty() {
+            if let Some(reasoning) = message.and_then(|m| m.get("reasoning")).and_then(|c| c.as_str()) {
+                text = reasoning.to_string();
+            }
+        }
 
         let mut tool_calls = Vec::new();
         if let Some(calls_arr) = message.and_then(|m| m.get("tool_calls")).and_then(|c| c.as_array()) {

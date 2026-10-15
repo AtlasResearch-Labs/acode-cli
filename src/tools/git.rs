@@ -5,6 +5,7 @@ use crate::tools::shell::ShellTools;
 
 #[derive(Debug, Clone)]
 pub struct GitStatusResult {
+    pub is_repo: bool,
     pub branch: String,
     pub clean: bool,
     pub modified: Vec<String>,
@@ -26,8 +27,9 @@ impl GitTools {
         let res = self.shell.run_command("git status --short --branch", None).await;
         if !res.success {
             return GitStatusResult {
+                is_repo: false,
                 branch: String::new(),
-                clean: true,
+                clean: false,
                 modified: Vec::new(),
                 untracked: Vec::new(),
             };
@@ -59,6 +61,7 @@ impl GitTools {
         let clean = modified.is_empty() && untracked.is_empty();
 
         GitStatusResult {
+            is_repo: true,
             branch,
             clean,
             modified,

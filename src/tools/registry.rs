@@ -267,12 +267,20 @@ impl ToolRegistry {
             }
             "git_status" => {
                 let status = self.git.get_status().await;
-                let out = serde_json::json!({
-                    "branch": status.branch,
-                    "clean": status.clean,
-                    "modified": status.modified,
-                    "untracked": status.untracked
-                });
+                let out = if !status.is_repo {
+                    serde_json::json!({
+                        "is_git_repo": false,
+                        "status": "Not a git repository. Workspace is an unversioned directory."
+                    })
+                } else {
+                    serde_json::json!({
+                        "is_git_repo": true,
+                        "branch": status.branch,
+                        "clean": status.clean,
+                        "modified": status.modified,
+                        "untracked": status.untracked
+                    })
+                };
                 (true, out.to_string())
             }
             "git_diff" => {

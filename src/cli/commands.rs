@@ -29,36 +29,51 @@ impl SlashCommandHandler {
                 true
             }
             "/diff" => {
-                let diff = orchestrator.tools.git.get_diff(false).await;
-                if diff.is_empty() {
-                    println!("{}No working tree changes.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                let git_diff = orchestrator.tools.git.get_diff(false).await;
+                if !git_diff.is_empty() {
+                    TuiRenderer::print_diff(&git_diff);
+                } else if !orchestrator.session_diffs.is_empty() {
+                    println!("\n{}[SESSION MODIFICATIONS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                    for (file, diff) in &orchestrator.session_diffs {
+                        println!("{}File: {}{}", TuiRenderer::CYAN, file, TuiRenderer::RESET);
+                        TuiRenderer::print_diff(diff);
+                    }
+                    println!();
                 } else {
-                    TuiRenderer::print_diff(&diff);
+                    println!("{}No working tree or session modifications recorded.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 }
                 true
             }
             "/status" => {
                 let status = orchestrator.tools.git.get_status().await;
-                println!(
-                    "\n{}[GIT STATUS]{} Branch: {}{}{}",
-                    TuiRenderer::BOLD, TuiRenderer::RESET, TuiRenderer::CYAN, status.branch, TuiRenderer::RESET
-                );
-                if status.clean {
-                    println!("{}[OK] Working tree clean.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                if !status.is_repo {
+                    println!(
+                        "\n{}[STATUS]{} Workspace root: {}{}{}\n{}[INFO] Directory is not a git repository. Session file tracking active.{}\n",
+                        TuiRenderer::BOLD, TuiRenderer::RESET, TuiRenderer::CYAN, orchestrator.workspace_root.display(), TuiRenderer::RESET,
+                        TuiRenderer::DIM, TuiRenderer::RESET
+                    );
                 } else {
-                    if !status.modified.is_empty() {
-                        println!("{}Modified files:{}", TuiRenderer::YELLOW, TuiRenderer::RESET);
-                        for m in &status.modified {
-                            println!("  M {}", m);
+                    println!(
+                        "\n{}[GIT STATUS]{} Branch: {}{}{}",
+                        TuiRenderer::BOLD, TuiRenderer::RESET, TuiRenderer::CYAN, status.branch, TuiRenderer::RESET
+                    );
+                    if status.clean {
+                        println!("{}[OK] Working tree clean.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                    } else {
+                        if !status.modified.is_empty() {
+                            println!("{}Modified files:{}", TuiRenderer::YELLOW, TuiRenderer::RESET);
+                            for m in &status.modified {
+                                println!("  M {}", m);
+                            }
                         }
-                    }
-                    if !status.untracked.is_empty() {
-                        println!("{}Untracked files:{}", TuiRenderer::RED, TuiRenderer::RESET);
-                        for u in &status.untracked {
-                            println!("  ? {}", u);
+                        if !status.untracked.is_empty() {
+                            println!("{}Untracked files:{}", TuiRenderer::RED, TuiRenderer::RESET);
+                            for u in &status.untracked {
+                                println!("  ? {}", u);
+                            }
                         }
+                        println!();
                     }
-                    println!();
                 }
                 true
             }
@@ -136,6 +151,26 @@ impl SlashCommandHandler {
                     println!("{}Current model: {} ({}){}\n", TuiRenderer::CYAN, orchestrator.provider.config.model, orchestrator.provider.config.provider, TuiRenderer::RESET);
                 } else {
                     orchestrator.provider.config.model = arg.to_string();
+                    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+                        let daedalus_dir = std::path::PathBuf::from(home).join(".daedalus");
+                        let _ = std::fs::create_dir_all(&daedalus_dir);
+                        let env_file = daedalus_dir.join(".env");
+                        let var_name = "DAEDALUS_MODEL";
+                        let mut existing = std::fs::read_to_string(&env_file).unwrap_or_default();
+                        if existing.contains(var_name) {
+                            let lines: Vec<String> = existing.lines().map(|l| {
+                                if l.starts_with(var_name) {
+                                    format!("{}={}", var_name, arg)
+                                } else {
+                                    l.to_string()
+                                }
+                            }).collect();
+                            existing = lines.join("\n") + "\n";
+                        } else {
+                            existing.push_str(&format!("{}={}\n", var_name, arg));
+                        }
+                        let _ = std::fs::write(&env_file, existing);
+                    }
                     println!("{}[OK] Switched active model to: {}{}\n", TuiRenderer::GREEN, arg, TuiRenderer::RESET);
                 }
                 true

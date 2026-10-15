@@ -105,8 +105,17 @@ impl DaedalusREPL {
                         }
                     }
 
-                    println!();
-                    let res = self.orchestrator.run_task(trimmed, |event| match event {
+                    // Auto-unwrap accidental CLI invocation syntax inside interactive REPL
+                    let effective_prompt = if let Some(stripped) = trimmed.strip_prefix("acode ") {
+                        stripped.trim_matches('"').trim_matches('\'').trim()
+                    } else if let Some(stripped) = trimmed.strip_prefix("acode.exe ") {
+                        stripped.trim_matches('"').trim_matches('\'').trim()
+                    } else {
+                        trimmed
+                    };
+
+                    println!("{}[ACODE] Dispatching to {} ({})...{}\n", TuiRenderer::DIM, self.orchestrator.provider.config.model, self.orchestrator.provider.config.provider, TuiRenderer::RESET);
+                    let res = self.orchestrator.run_task(effective_prompt, |event| match event {
                         AgentEvent::Thinking(s) => TuiRenderer::print_thinking(s),
                         AgentEvent::ToolStart { name, args } => TuiRenderer::print_tool_start(name, args),
                         AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),

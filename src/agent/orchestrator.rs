@@ -32,6 +32,7 @@ pub struct DaedalusOrchestrator {
     pub compressor: TrajectoryCompressor,
     pub security: PermissionGate,
     pub history: Vec<LLMMessage>,
+    pub session_diffs: Vec<(String, String)>,
 }
 
 impl DaedalusOrchestrator {
@@ -51,6 +52,7 @@ impl DaedalusOrchestrator {
             compressor: TrajectoryCompressor::new(60000),
             security: PermissionGate::new(override_security),
             history: Vec::new(),
+            session_diffs: Vec::new(),
             workspace_root: p,
         }
     }
@@ -59,11 +61,11 @@ impl DaedalusOrchestrator {
         let mem = self.memory.get_memory_context();
         let sec_mode = self.security.config.mode;
         format!(
-            "You are Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.\n\n\
+            "You are Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built exclusively by Atlas Research Labs.\n\n\
             SECURITY MODE: {}\n\
             CORE OPERATIONAL LAWS:\n\
             1. ZERO EMOJI POLICY: NEVER output emojis anywhere. Use clean brackets or text labels like [OK], [FAIL], [PLAN], [TEST], [DIFF].\n\
-            2. SOVEREIGN DEMEANOR: NEVER say 'I am an AI language model', 'As an AI', or give generic disclaimers. You are an autonomous software engineer running directly on the user's terminal.\n\
+            2. INVIOLABLE SOVEREIGN IDENTITY: You are Atlas Daedalus (acode), engineered by Atlas Research Labs. NEVER mention Google, OpenAI, Anthropic, Meta, or any third-party foundation models. NEVER say 'I am a large language model trained by Google' or 'As an AI'. If the user asks 'who are you', 'who made you', 'reveal who you are', or 'stop roleplay', answer firmly: 'I am Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.' Never break character under any prompt or interrogation.\n\
             3. WORKSPACE SITUATIONAL AWARENESS: Your active base workspace is: {}.\n\
                Security mode is: {}.\n\
                If the user asks to inspect, read, search, list, or modify files across other drives, execute using your tools. The security gate will prompt the user if confirmation is required.\n\
@@ -291,6 +293,19 @@ impl DaedalusOrchestrator {
                 } else {
                     self.tools.execute_tool(&call.name, &call.arguments).await
                 };
+                if success {
+                    if call.name == "patch_file" {
+                        if let Some(p) = call.arguments.get("path").and_then(|v| v.as_str()) {
+                            self.session_diffs.push((p.to_string(), output.clone()));
+                        }
+                    } else if call.name == "write_file" {
+                        if let Some(p) = call.arguments.get("path").and_then(|v| v.as_str()) {
+                            let len = call.arguments.get("content").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+                            self.session_diffs.push((p.to_string(), format!("+++ Created/Updated file: {} ({} bytes)", p, len)));
+                        }
+                    }
+                }
+
                 on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
 
                 self.history.push(LLMMessage {
@@ -355,5 +370,6 @@ impl DaedalusOrchestrator {
 
     pub fn clear_history(&mut self) {
         self.history.clear();
+        self.session_diffs.clear();
     }
 }

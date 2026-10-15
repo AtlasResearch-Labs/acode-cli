@@ -8,6 +8,7 @@ mod telemetry;
 mod context;
 mod tools;
 mod providers;
+mod security;
 mod agent;
 mod cli;
 
@@ -15,6 +16,7 @@ use clap::Parser;
 use std::env;
 
 use crate::agent::orchestrator::{AgentEvent, DaedalusOrchestrator};
+use crate::cli::commands::SlashCommandHandler;
 use crate::cli::repl::DaedalusREPL;
 use crate::cli::tui::TuiRenderer;
 
@@ -22,7 +24,7 @@ use crate::cli::tui::TuiRenderer;
 #[command(
     name = "acode",
     author = "Eren Yeager <victor@atlasresearchlabs.online>",
-    version = "1.0.4-industrial",
+    version = "1.0.6-industrial",
     about = "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Atlas Research Labs)"
 )]
 struct CliArgs {
@@ -37,6 +39,10 @@ struct CliArgs {
     /// Override active AI provider (gemini, anthropic, openai, powerbox, ollama)
     #[arg(short, long)]
     provider: Option<String>,
+
+    /// Override agent security mode (full, sandboxed, strict)
+    #[arg(short = 's', long)]
+    security: Option<String>,
 }
 
 #[tokio::main]
@@ -53,22 +59,31 @@ async fn main() {
 
     let args = CliArgs::parse();
     let workspace_root = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let security_mode = args.security.as_deref().and_then(|s| s.parse().ok());
 
     let mut orchestrator = DaedalusOrchestrator::new(
         &workspace_root,
         args.model.clone(),
         args.provider.clone(),
+        security_mode,
     );
 
     let full_prompt = args.prompt.join(" ").trim().to_string();
 
     if !full_prompt.is_empty() {
+        if full_prompt.starts_with('/') {
+            let _ = SlashCommandHandler::handle(&full_prompt, &mut orchestrator).await;
+            return;
+        }
+
         // Non-interactive task execution
         let root_str = workspace_root.to_string_lossy().to_string();
+        let sec_str = orchestrator.security.config.mode.to_string();
         TuiRenderer::print_header(
             &root_str,
             &orchestrator.provider.config.model,
             &orchestrator.provider.config.provider,
+            &sec_str,
         );
 
         println!("{}[TASK]{} {}\n", TuiRenderer::BOLD, TuiRenderer::RESET, full_prompt);

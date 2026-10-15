@@ -9,6 +9,7 @@ use crate::context::compressor::{ChatMessage, TrajectoryCompressor};
 use crate::context::memory::MemoryEngine;
 use crate::providers::router::ProviderRouter;
 use crate::providers::types::LLMMessage;
+use crate::security::{PermissionDecision, PermissionGate, SecurityMode};
 use crate::telemetry::chronicle::ChronicleTracer;
 use crate::tools::registry::ToolRegistry;
 
@@ -29,6 +30,7 @@ pub struct DaedalusOrchestrator {
     pub chronicle: ChronicleTracer,
     pub verifier: SelfHealingVerifier,
     pub compressor: TrajectoryCompressor,
+    pub security: PermissionGate,
     pub history: Vec<LLMMessage>,
 }
 
@@ -37,6 +39,7 @@ impl DaedalusOrchestrator {
         workspace_root: P,
         override_model: Option<String>,
         override_provider: Option<String>,
+        override_security: Option<SecurityMode>,
     ) -> Self {
         let p = workspace_root.as_ref().to_path_buf();
         Self {
@@ -46,6 +49,7 @@ impl DaedalusOrchestrator {
             chronicle: ChronicleTracer::new(&p),
             verifier: SelfHealingVerifier::new(&p),
             compressor: TrajectoryCompressor::new(60000),
+            security: PermissionGate::new(override_security),
             history: Vec::new(),
             workspace_root: p,
         }
@@ -53,21 +57,25 @@ impl DaedalusOrchestrator {
 
     fn build_system_prompt(&self) -> String {
         let mem = self.memory.get_memory_context();
+        let sec_mode = self.security.config.mode;
         format!(
             "You are Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.\n\n\
+            SECURITY MODE: {}\n\
             CORE OPERATIONAL LAWS:\n\
             1. ZERO EMOJI POLICY: NEVER output emojis anywhere. Use clean brackets or text labels like [OK], [FAIL], [PLAN], [TEST], [DIFF].\n\
             2. SOVEREIGN DEMEANOR: NEVER say 'I am an AI language model', 'As an AI', or give generic disclaimers. You are an autonomous software engineer running directly on the user's terminal.\n\
             3. WORKSPACE SITUATIONAL AWARENESS: Your active base workspace is: {}.\n\
-               You have UNRESTRICTED SYSTEM ACCESS to inspect, read, search, list, and modify any file, directory, or drive (e.g. C:\\, D:\\, F:\\) the user requests.\n\
-               NEVER claim you are confined, sandboxed, or lack permissions to access external drives or paths. If the user asks to see, inspect, or navigate to another directory or drive, execute their request immediately.\n\
+               Security mode is: {}.\n\
+               If the user asks to inspect, read, search, list, or modify files across other drives, execute using your tools. The security gate will prompt the user if confirmation is required.\n\
                If the user asks to switch, cd into, or get into another directory, call the 'change_workspace' tool immediately.\n\
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely without unnecessary filler or tool overhead.\n\
             7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel.\n\n\
             WORKSPACE ROOT: {}\n{}",
+            sec_mode,
             self.workspace_root.display(),
+            sec_mode,
             self.workspace_root.display(),
             if mem.is_empty() { String::new() } else { format!("\nPROJECT MEMORY:\n{}", mem) }
         )
@@ -212,6 +220,45 @@ impl DaedalusOrchestrator {
             // Execute each tool call
             for call in &tool_calls {
                 on_event(AgentEvent::ToolStart { name: &call.name, args: &call.arguments });
+
+                // Security gate verification
+                let decision = self.security.evaluate(&call.name, &call.arguments, &self.workspace_root);
+                match decision {
+                    PermissionDecision::Allow => {}
+                    PermissionDecision::Deny(reason) => {
+                        let output = format!("[SECURITY POLICY DENIED] Operation aborted: {}", reason);
+                        on_event(AgentEvent::ToolEnd { name: &call.name, success: false, output: &output });
+                        self.history.push(LLMMessage {
+                            role: "tool".to_string(),
+                            content: output,
+                            tool_calls: None,
+                            tool_call_id: Some(call.id.clone()),
+                            name: Some(call.name.clone()),
+                        });
+                        continue;
+                    }
+                    PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+                        let allowed = self.security.prompt_user_interactive(
+                            &call.name,
+                            &reason,
+                            &details,
+                            risk_level,
+                            suggest_trust_path.as_deref(),
+                        );
+                        if !allowed {
+                            let output = format!("[SECURITY CHALLENGE DENIED] User declined permission to execute: {}", details);
+                            on_event(AgentEvent::ToolEnd { name: &call.name, success: false, output: &output });
+                            self.history.push(LLMMessage {
+                                role: "tool".to_string(),
+                                content: output,
+                                tool_calls: None,
+                                tool_call_id: Some(call.id.clone()),
+                                name: Some(call.name.clone()),
+                            });
+                            continue;
+                        }
+                    }
+                }
 
                 if call.name == "write_file" || call.name == "patch_file" {
                     if let Some(p) = call.arguments.get("path").and_then(|v| v.as_str()) {

@@ -62,7 +62,8 @@ impl DaedalusREPL {
         let model = self.orchestrator.provider.config.model.clone();
         let provider = self.orchestrator.provider.config.provider.clone();
 
-        TuiRenderer::print_header(&root, &model, &provider);
+        let security = self.orchestrator.security.config.mode.to_string();
+        TuiRenderer::print_header(&root, &model, &provider, &security);
 
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin).lines();

@@ -15,17 +15,25 @@ impl TuiRenderer {
     pub const WHITE: &'static str = "\x1b[37m";
     pub const GRAY: &'static str = "\x1b[90m";
 
-    pub fn print_header(workspace_root: &str, model: &str, provider: &str) {
+    pub fn print_header(workspace_root: &str, model: &str, provider: &str, security: &str) {
         let border = "=".repeat(78);
         println!("\n{}{}{}", Self::CYAN, border, Self::RESET);
         println!(
-            "{}{}  ATLAS DAEDALUS (acode){}  {}v1.0.0-industrial · Native Rust Engine · Atlas Research Labs{}",
+            "{}{}  ATLAS DAEDALUS (acode){}  {}v1.0.5-industrial · Native Rust Engine · Atlas Research Labs{}",
             Self::BOLD, Self::WHITE, Self::RESET, Self::DIM, Self::RESET
         );
         println!("{}  Workspace: {}{}{}", Self::DIM, Self::WHITE, workspace_root, Self::RESET);
+        let sec_color = match security {
+            "full" => Self::GREEN,
+            "sandboxed" => Self::YELLOW,
+            "strict" => Self::RED,
+            _ => Self::CYAN,
+        };
         println!(
-            "{}  Provider:  {}{}{}  {}Model: {}{}{}",
-            Self::DIM, Self::GREEN, provider, Self::RESET, Self::DIM, Self::CYAN, model, Self::RESET
+            "{}  Security:  {}{}{}  {}Provider: {}{}{}  {}Model: {}{}{}",
+            Self::DIM, sec_color, security, Self::RESET,
+            Self::DIM, Self::GREEN, provider, Self::RESET,
+            Self::DIM, Self::CYAN, model, Self::RESET
         );
         println!(
             "{}  Type {}/help{} for commands, {}!<cmd>{} for shell, or enter prompt to begin.{}",

@@ -334,6 +334,80 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/security" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() {
+                    let cfg = &orchestrator.security.config;
+                    let mode_color = match cfg.mode {
+                        crate::security::SecurityMode::FullAccess => TuiRenderer::GREEN,
+                        crate::security::SecurityMode::Sandboxed => TuiRenderer::YELLOW,
+                        crate::security::SecurityMode::Strict => TuiRenderer::RED,
+                    };
+                    println!("\n{}[AGENT SECURITY GATE STATUS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                    println!("  Security Mode:   {}{}{}", mode_color, cfg.mode, TuiRenderer::RESET);
+                    println!("  Trusted Paths:   {}", cfg.trusted_paths.len());
+                    for tp in &cfg.trusted_paths {
+                        println!("    + {}", tp.display());
+                    }
+                    println!("  Session Grants:  {} paths, {} commands", 
+                        orchestrator.security.session_allowed_paths.len(),
+                        orchestrator.security.session_allowed_commands.len()
+                    );
+                    println!("\nCommands:");
+                    println!("  /security mode <full|sandboxed|strict> - Toggle security profile");
+                    println!("  /security trust <path>                 - Add persistent trusted path");
+                    println!("  /security untrust <path>               - Remove trusted path");
+                    println!("  /security reset                        - Clear active session grants\n");
+                    return true;
+                }
+
+                match parts[0].to_lowercase().as_str() {
+                    "mode" => {
+                        if parts.len() < 2 {
+                            println!("{}Usage: /security mode <full | sandboxed | strict>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        match parts[1].parse::<crate::security::SecurityMode>() {
+                            Ok(new_mode) => {
+                                orchestrator.security.set_mode(new_mode);
+                                println!("{}[OK] Switched agent security mode to: {}{}\n", TuiRenderer::GREEN, new_mode, TuiRenderer::RESET);
+                            }
+                            Err(e) => {
+                                println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET);
+                            }
+                        }
+                    }
+                    "trust" => {
+                        if parts.len() < 2 {
+                            println!("{}Usage: /security trust <directory_path>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        let p = std::path::PathBuf::from(parts[1..].join(" "));
+                        orchestrator.security.trust_path(p.clone());
+                        println!("{}[OK] Added trusted path: {}{}\n", TuiRenderer::GREEN, p.display(), TuiRenderer::RESET);
+                    }
+                    "untrust" => {
+                        if parts.len() < 2 {
+                            println!("{}Usage: /security untrust <directory_path>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        let p = std::path::Path::new(parts[1]);
+                        if orchestrator.security.untrust_path(p) {
+                            println!("{}[OK] Removed trusted path: {}{}\n", TuiRenderer::GREEN, p.display(), TuiRenderer::RESET);
+                        } else {
+                            println!("{}[FAIL] Path was not in trusted list: {}{}\n", TuiRenderer::RED, p.display(), TuiRenderer::RESET);
+                        }
+                    }
+                    "reset" => {
+                        orchestrator.security.clear_session_grants();
+                        println!("{}[OK] Cleared all active session permission grants.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                    }
+                    _ => {
+                        println!("{}Usage: /security [mode <full|sandboxed|strict> | trust <path> | untrust <path> | reset]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -368,6 +442,7 @@ impl SlashCommandHandler {
     fn print_help() {
         println!("\n{}[ATLAS DAEDALUS COMMANDS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
         println!("  {}/help{}            - Show this command reference", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/security{}        - Manage agent security mode (/security mode full|sandboxed|strict)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/info{}            - Display active workspace root, git branch, and context", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/cd <path|@alias>{} - Switch active workspace root directory", TuiRenderer::CYAN, TuiRenderer::RESET);

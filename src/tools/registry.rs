@@ -13,6 +13,7 @@ use crate::tools::daemon::DaemonRegistry;
 use crate::tools::deps::DependencyManager;
 use crate::tools::container::ContainerManager;
 use crate::tools::symbols::SymbolEngine;
+use crate::tools::sandbox::ShadowSandbox;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -31,6 +32,7 @@ pub struct ToolRegistry {
     pub deps: DependencyManager,
     pub containers: ContainerManager,
     pub symbols: SymbolEngine,
+    pub sandbox: ShadowSandbox,
     pub workspace_root: std::path::PathBuf,
 }
 
@@ -47,6 +49,7 @@ impl ToolRegistry {
             deps: DependencyManager::new(&p),
             containers: ContainerManager::new(),
             symbols: SymbolEngine::new(&p),
+            sandbox: ShadowSandbox::new(&p),
             workspace_root: p,
         }
     }
@@ -362,6 +365,25 @@ impl ToolRegistry {
                         "write_to_file": { "type": "boolean", "description": "If true, writes scaffold directly to test destination file (optional)" }
                     },
                     "required": ["path"]
+                }),
+            },
+            ToolDefinition {
+                name: "manage_sandbox".to_string(),
+                description: "Manage isolated shadow git worktrees in .daedalus/shadow/ for zero-risk autonomous coding, testing, and refactoring without dirtying the user's workspace.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["start", "merge", "abort", "list", "status"],
+                            "description": "Sandbox action to execute: 'start' (create isolated worktree), 'merge' (apply shadow modifications back into active working tree), 'abort' (discard worktree and branch cleanly), 'list' (list active shadow worktrees), or 'status' (inspect active sandbox)"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Optional custom name or identifier for the shadow sandbox session"
+                        }
+                    },
+                    "required": ["action"]
                 }),
             },
         ]
@@ -835,6 +857,72 @@ impl ToolRegistry {
                         }
                     }
                     Err(e) => (false, e),
+                }
+            }
+            "manage_sandbox" => {
+                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+                let name = args.get("name").and_then(|v| v.as_str());
+
+                match action {
+                    "start" => {
+                        match self.sandbox.create_sandbox(name) {
+                            Ok(session) => (
+                                true,
+                                format!(
+                                    "[SANDBOX CREATED] Session ID: {}\nBranch: {}\nWorktree Path: {}\nOriginal Root: {}\n\nChanges inside this worktree are completely isolated from the primary workspace.",
+                                    session.session_id, session.branch_name, session.worktree_path.display(), session.original_root.display()
+                                ),
+                            ),
+                            Err(e) => (false, format!("Failed to create sandbox: {}", e)),
+                        }
+                    }
+                    "merge" => {
+                        let id = name.unwrap_or("active");
+                        let shadow_dir = self.workspace_root.join(".daedalus").join("shadow");
+                        let session = crate::tools::sandbox::ShadowSession {
+                            session_id: id.to_string(),
+                            branch_name: format!("daedalus-shadow-{}", id),
+                            worktree_path: shadow_dir.join(id),
+                            original_root: self.workspace_root.clone(),
+                            is_active: true,
+                        };
+                        match self.sandbox.merge_sandbox(&session) {
+                            Ok(msg) => (true, format!("[SANDBOX MERGED] {}", msg)),
+                            Err(e) => (false, format!("Merge failed: {}", e)),
+                        }
+                    }
+                    "abort" => {
+                        let id = name.unwrap_or("active");
+                        let shadow_dir = self.workspace_root.join(".daedalus").join("shadow");
+                        let session = crate::tools::sandbox::ShadowSession {
+                            session_id: id.to_string(),
+                            branch_name: format!("daedalus-shadow-{}", id),
+                            worktree_path: shadow_dir.join(id),
+                            original_root: self.workspace_root.clone(),
+                            is_active: true,
+                        };
+                        match self.sandbox.discard_sandbox(&session) {
+                            Ok(msg) => (true, format!("[SANDBOX ABORTED] {}", msg)),
+                            Err(e) => (false, format!("Abort failed: {}", e)),
+                        }
+                    }
+                    "list" | "status" => {
+                        match self.sandbox.list_sandboxes() {
+                            Ok(list) => {
+                                if list.is_empty() {
+                                    (true, "[SANDBOX STATUS] Zero active shadow worktrees.".to_string())
+                                } else {
+                                    let mut out = format!("[ACTIVE SHADOW WORKTREES (Total: {})]\n\n", list.len());
+                                    for s in &list {
+                                        out.push_str(&format!("  - [{}] Branch: {} | Path: {}\n", s.session_id, s.branch, s.path));
+                                    }
+                                    (true, out)
+                                }
+                            }
+                            Err(e) => (false, format!("Failed to list sandboxes: {}", e)),
+                        }
+                    }
+                    _ => (false, format!("Unknown sandbox action: '{}'. Use start, merge, abort, list, or status.", action)),
                 }
             }
             _ => (false, format!("Unknown tool: {}", name)),

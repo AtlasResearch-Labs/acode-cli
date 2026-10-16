@@ -948,6 +948,110 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/sandbox" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() || parts[0].eq_ignore_ascii_case("status") || parts[0].eq_ignore_ascii_case("list") {
+                    println!("\n{}[SHADOW WORKSPACE SANDBOX]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                    if let Some(session) = &orchestrator.active_sandbox {
+                        println!("  Active Session:  {}{}{}", TuiRenderer::GREEN, session.session_id, TuiRenderer::RESET);
+                        println!("  Branch:          {}", session.branch_name);
+                        println!("  Worktree Path:   {}", session.worktree_path.display());
+                        println!("  Original Root:   {}", session.original_root.display());
+                        println!("  Status:          Attached & Active\n");
+                    } else {
+                        println!("  Active Session:  None (Running on primary workspace)\n");
+                    }
+
+                    match orchestrator.tools.sandbox.list_sandboxes() {
+                        Ok(list) => {
+                            if list.is_empty() {
+                                println!("  Zero shadow worktrees currently in .daedalus/shadow/.\n");
+                            } else {
+                                println!("  {}[ACTIVE SHADOW WORKTREES]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                                for s in list {
+                                    let active_mark = if orchestrator.active_sandbox.as_ref().map(|a| a.session_id == s.session_id).unwrap_or(false) {
+                                        format!(" {}[ATTACHED]{}", TuiRenderer::GREEN, TuiRenderer::RESET)
+                                    } else {
+                                        String::new()
+                                    };
+                                    println!("  - {}{}{} ({}){}", TuiRenderer::CYAN, s.session_id, TuiRenderer::RESET, s.branch, active_mark);
+                                    println!("    Path: {}", s.path);
+                                }
+                                println!();
+                            }
+                        }
+                        Err(e) => println!("{}[FAIL] Error listing sandboxes: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                    }
+                    println!("Commands:");
+                    println!("  /sandbox start [name] - Create and attach isolated shadow git worktree");
+                    println!("  /sandbox merge        - Apply shadow modifications to primary workspace & teardown");
+                    println!("  /sandbox abort        - Discard shadow worktree & branch without touching primary code\n");
+                    return true;
+                }
+
+                match parts[0].to_lowercase().as_str() {
+                    "start" | "create" | "new" => {
+                        let custom_name = if parts.len() > 1 { Some(parts[1]) } else { None };
+                        println!("{}[ACODE] Spawning isolated git shadow worktree...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                        match orchestrator.tools.sandbox.create_sandbox(custom_name) {
+                            Ok(session) => {
+                                let wt_path = session.worktree_path.clone();
+                                let session_id = session.session_id.clone();
+                                let branch = session.branch_name.clone();
+                                orchestrator.active_sandbox = Some(session);
+                                orchestrator.set_workspace(wt_path.clone());
+                                println!("\n{}[OK] Shadow Sandbox '{}' active!{}", TuiRenderer::GREEN, session_id, TuiRenderer::RESET);
+                                println!("  Branch:        {}{}{}", TuiRenderer::CYAN, branch, TuiRenderer::RESET);
+                                println!("  Worktree Path: {}", wt_path.display());
+                                println!("  {}[INFO] Workspace root switched to shadow tree. All autonomous edits & builds are 100% isolated.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                            }
+                            Err(e) => println!("{}[FAIL] Failed to create sandbox: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
+                    "merge" | "apply" => {
+                        if let Some(session) = orchestrator.active_sandbox.take() {
+                            println!("{}[ACODE] Computing diff and merging shadow sandbox '{}' back into primary workspace...{}", TuiRenderer::DIM, session.session_id, TuiRenderer::RESET);
+                            let orig_root = session.original_root.clone();
+                            match orchestrator.tools.sandbox.merge_sandbox(&session) {
+                                Ok(msg) => {
+                                    orchestrator.set_workspace(orig_root.clone());
+                                    println!("\n{}[OK] Sandbox merged successfully!{}", TuiRenderer::GREEN, TuiRenderer::RESET);
+                                    println!("  {}\n  Workspace restored to: {}\n", msg, orig_root.display());
+                                }
+                                Err(e) => {
+                                    orchestrator.active_sandbox = Some(session);
+                                    println!("{}[FAIL] Merge failed: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET);
+                                }
+                            }
+                        } else {
+                            println!("{}No active shadow sandbox attached. Use /sandbox start [name]{}\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
+                        }
+                    }
+                    "abort" | "discard" | "drop" => {
+                        if let Some(session) = orchestrator.active_sandbox.take() {
+                            println!("{}[ACODE] Discarding shadow sandbox '{}'...{}", TuiRenderer::DIM, session.session_id, TuiRenderer::RESET);
+                            let orig_root = session.original_root.clone();
+                            match orchestrator.tools.sandbox.discard_sandbox(&session) {
+                                Ok(msg) => {
+                                    orchestrator.set_workspace(orig_root.clone());
+                                    println!("\n{}[OK] Sandbox discarded cleanly. Zero modifications applied to primary workspace.{}", TuiRenderer::GREEN, TuiRenderer::RESET);
+                                    println!("  {}\n  Workspace restored to: {}\n", msg, orig_root.display());
+                                }
+                                Err(e) => {
+                                    orchestrator.set_workspace(orig_root);
+                                    println!("{}[FAIL] Discard error: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET);
+                                }
+                            }
+                        } else {
+                            println!("{}No active shadow sandbox attached to abort.{}\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
+                        }
+                    }
+                    _ => {
+                        println!("{}Usage: /sandbox [start [name] | merge | abort | list | status]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -983,6 +1087,7 @@ impl SlashCommandHandler {
         println!("\n{}[ATLAS DAEDALUS COMMANDS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
         println!("  {}/help{}            - Show this command reference", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/security{}        - Manage agent security mode (/security mode full|sandboxed|strict)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/sandbox [action]{} - Shadow git worktrees (/sandbox start [name], merge, abort, list)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/memory{}          - Inspect or update persistent USER.md and MEMORY.md", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/blackbox{}        - View BlackBox flight recorder telemetry & audit stream", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/daemons{}         - List and inspect background process daemons", TuiRenderer::CYAN, TuiRenderer::RESET);

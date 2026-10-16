@@ -36,6 +36,7 @@ pub struct DaedalusOrchestrator {
     pub compressor: TrajectoryCompressor,
     pub security: PermissionGate,
     pub task_graph: Option<TaskGraph>,
+    pub active_sandbox: Option<crate::tools::sandbox::ShadowSession>,
     pub history: Vec<LLMMessage>,
     pub session_diffs: Vec<(String, String)>,
 }
@@ -58,6 +59,7 @@ impl DaedalusOrchestrator {
             compressor: TrajectoryCompressor::new(60000),
             security: PermissionGate::new(override_security),
             task_graph: None,
+            active_sandbox: None,
             history: Vec::new(),
             session_diffs: Vec::new(),
             workspace_root: p,
@@ -80,13 +82,14 @@ impl DaedalusOrchestrator {
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, scaffold_test.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, scaffold_test, manage_sandbox.\n\
                - web_search & web_fetch: Multi-source web search and clean markdown extraction.\n\
                - manage_dependencies: Direct interface to Cargo, NPM, PNPM, Bun, Yarn, Pip, and Go.\n\
                - manage_containers: Docker/Podman container status, logs, and compose up/down.\n\
                - extract_symbols & find_symbols: Structural code symbol navigation across files.\n\
                - rename_symbol: Semantic cross-file identifier refactoring.\n\
                - scaffold_test: Proactively generate unit test scaffolds for source files.\n\
+               - manage_sandbox: Creates and merges isolated shadow git worktrees in .daedalus/shadow/ for risk-free code refactoring and experimentation.\n\
                - update_memory: Record persistent user preferences (~/.daedalus/USER.md) or project architectural learnings (.daedalus/MEMORY.md).\n\n\
             WORKSPACE ROOT: {}\n{}{}",
             sec_mode,

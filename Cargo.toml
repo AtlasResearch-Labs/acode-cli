@@ -1,6 +1,6 @@
 [package]
 name = "acode"
-version = "1.4.1"
+version = "1.4.2"
 edition = "2021"
 authors = ["Eren Yeager <victor@atlasresearchlabs.online>"]
 description = "Atlas Daedalus (acode) — Industrial Autonomous Terminal AI Coder"

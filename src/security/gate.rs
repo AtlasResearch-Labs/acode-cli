@@ -69,23 +69,54 @@ impl PermissionGate {
             return PermissionDecision::Allow;
         }
 
-        if tool_name == "run_command" {
-            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("").trim();
+        // Terminal execution tools: run_command, run_tests, start_daemon
+        if tool_name == "run_command" || tool_name == "run_tests" || tool_name == "start_daemon" {
+            let cmd = match tool_name {
+                "run_tests" => {
+                    args.get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("cargo test")
+                        .trim()
+                }
+                _ => {
+                    args.get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                }
+            };
             if cmd.is_empty() {
                 return PermissionDecision::Allow;
             }
 
-            if self.session_allowed_commands.contains(cmd) || self.config.trusted_commands.iter().any(|tc| cmd.starts_with(tc)) {
+            // Split compound chained commands (e.g. "git status; rm -rf ~" or "cargo test && /bin/sh")
+            let sub_cmds = SecurityPolicy::split_command_chain(cmd);
+
+            // Audit EVERY sub-command for high/critical risk patterns
+            for sub in &sub_cmds {
+                if let Some((risk, reason)) = SecurityPolicy::scan_command_risk(sub) {
+                    return PermissionDecision::Prompt {
+                        reason: reason.to_string(),
+                        details: format!("Command: {}", cmd),
+                        risk_level: risk,
+                        suggest_trust_path: None,
+                    };
+                }
+            }
+
+            if self.session_allowed_commands.contains(cmd) {
                 return PermissionDecision::Allow;
             }
 
-            if let Some((risk, reason)) = SecurityPolicy::scan_command_risk(cmd) {
-                return PermissionDecision::Prompt {
-                    reason: reason.to_string(),
-                    details: format!("Command: {}", cmd),
-                    risk_level: risk,
-                    suggest_trust_path: None,
-                };
+            // Check if every individual sub-command is in trusted commands
+            let all_trusted = !sub_cmds.is_empty() && sub_cmds.iter().all(|sub| {
+                self.config.trusted_commands.iter().any(|tc| {
+                    sub == tc || sub.starts_with(&format!("{} ", tc))
+                })
+            });
+
+            if all_trusted {
+                return PermissionDecision::Allow;
             }
 
             if self.config.mode == SecurityMode::Strict {
@@ -97,12 +128,67 @@ impl PermissionGate {
                 };
             }
 
+            if tool_name == "start_daemon" {
+                return PermissionDecision::Prompt {
+                    reason: "Starting persistent background daemon process".to_string(),
+                    details: format!("Daemon command: {}", cmd),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+
             return PermissionDecision::Allow;
         }
 
-        // Tools operating on paths
+        // Network tunneling tools
+        if tool_name == "beacon_tunnel" {
+            let port = args.get("port").and_then(|v| v.as_u64()).unwrap_or(0);
+            return PermissionDecision::Prompt {
+                reason: "Exposing local network port to the public internet via HTTPS tunnel".to_string(),
+                details: format!("Local Port: {}", port),
+                risk_level: RiskLevel::High,
+                suggest_trust_path: None,
+            };
+        }
+
+        // Container management tools
+        if tool_name == "manage_containers" {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+            let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            if matches!(action, "stop" | "compose_down") {
+                return PermissionDecision::Prompt {
+                    reason: "Terminating container workloads or tearing down docker-compose services".to_string(),
+                    details: format!("Action: {}, Target: {}", action, target),
+                    risk_level: RiskLevel::High,
+                    suggest_trust_path: None,
+                };
+            } else if matches!(action, "compose_up" | "restart") && self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires confirmation for container lifecycle state changes".to_string(),
+                    details: format!("Action: {}, Target: {}", action, target),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+        }
+
+        // Dependency management tools
+        if tool_name == "manage_dependencies" {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+            let package = args.get("package").and_then(|v| v.as_str()).unwrap_or("");
+            if matches!(action, "add" | "remove") && self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires confirmation before modifying project dependencies".to_string(),
+                    details: format!("Action: {}, Package: {}", action, package),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+        }
+
+        // Tools operating on filesystem paths
         let raw_path = match tool_name {
-            "view_file" | "patch_file" | "write_file" => {
+            "view_file" | "patch_file" | "write_file" | "extract_symbols" | "scaffold_test" => {
                 args.get("path")
                     .or_else(|| args.get("file"))
                     .or_else(|| args.get("file_path"))
@@ -134,33 +220,34 @@ impl PermissionGate {
                 workspace_root.join(target)
             };
 
-            let canon = abs_path.canonicalize().unwrap_or_else(|_| abs_path.clone());
+            // Lexical normalization resolves '..' and '.' in memory even if the file does not yet exist on disk
+            let normalized = SecurityPolicy::normalize_lexically(&abs_path);
 
             // Check sensitive file credentials
-            if SecurityPolicy::is_sensitive_path(&canon) {
+            if SecurityPolicy::is_sensitive_path(&normalized) {
                 if self.config.mode == SecurityMode::Strict {
-                    return PermissionDecision::Deny(format!("Strict mode prohibits access to sensitive credential file: {}", canon.display()));
+                    return PermissionDecision::Deny(format!("Strict mode prohibits access to sensitive credential file: {}", normalized.display()));
                 }
                 return PermissionDecision::Prompt {
                     reason: "Accessing sensitive host credential or identity file".to_string(),
-                    details: format!("Path: {}", canon.display()),
+                    details: format!("Path: {}", normalized.display()),
                     risk_level: RiskLevel::High,
                     suggest_trust_path: None,
                 };
             }
 
             // Check if granted in current session
-            if self.session_allowed_paths.iter().any(|sp| canon.starts_with(sp)) {
+            if self.session_allowed_paths.iter().any(|sp| normalized.starts_with(sp)) {
                 return PermissionDecision::Allow;
             }
 
-            let within_trusted = SecurityPolicy::is_within_trusted_boundaries(&canon, workspace_root, &self.config.trusted_paths);
+            let within_trusted = SecurityPolicy::is_within_trusted_boundaries(&normalized, workspace_root, &self.config.trusted_paths);
 
             if within_trusted {
                 if self.config.mode == SecurityMode::Strict && (tool_name == "write_file" || tool_name == "patch_file") {
                     return PermissionDecision::Prompt {
                         reason: "Strict mode requires human approval for all file mutations".to_string(),
-                        details: format!("Target file: {}", canon.display()),
+                        details: format!("Target file: {}", normalized.display()),
                         risk_level: RiskLevel::Low,
                         suggest_trust_path: None,
                     };
@@ -172,19 +259,19 @@ impl PermissionGate {
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Deny(format!(
                     "Strict mode prohibits access outside designated workspace root: {}",
-                    canon.display()
+                    normalized.display()
                 ));
             }
 
-            let suggest_folder = if canon.is_dir() {
-                Some(canon.clone())
+            let suggest_folder = if normalized.is_dir() {
+                Some(normalized.clone())
             } else {
-                canon.parent().map(|p| p.to_path_buf())
+                normalized.parent().map(|p| p.to_path_buf())
             };
 
             return PermissionDecision::Prompt {
                 reason: "Operation targets directory or drive outside designated workspace".to_string(),
-                details: format!("Path: {}", canon.display()),
+                details: format!("Path: {}", normalized.display()),
                 risk_level: RiskLevel::Medium,
                 suggest_trust_path: suggest_folder,
             };
@@ -227,28 +314,58 @@ impl PermissionGate {
         }
         println!("  [d] Deny Operation");
 
-        let prompt_options = if suggest_path.is_some() { "[y/s/t/d]" } else { "[y/s/d]" };
-        print!("\nChoice {} (default: y): ", prompt_options);
+        let default_choice = match risk {
+            RiskLevel::High | RiskLevel::Critical => "d",
+            RiskLevel::Low | RiskLevel::Medium => "y",
+        };
+
+        let prompt_options = match (suggest_path.is_some(), default_choice) {
+            (true, "d") => "[y/s/t/D] (default: Deny)",
+            (true, "y") => "[Y/s/t/d] (default: Allow)",
+            (false, "d") => "[y/s/D] (default: Deny)",
+            (false, "y") => "[Y/s/d] (default: Allow)",
+            _ => "[y/s/d]",
+        };
+        print!("\nChoice {}: ", prompt_options);
         let _ = io::stdout().flush();
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            println!("{}\n[FAIL] Failed to read user choice. Denying operation.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
-            println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
-            return false;
+        match io::stdin().read_line(&mut input) {
+            Ok(0) => {
+                // Closed stdin / EOF: must ALWAYS deny to prevent automated execution or headless pipe bypass
+                println!("{}\n[SECURITY GATE] Non-interactive EOF / closed stdin detected. Automatically denying operation.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
+                return false;
+            }
+            Err(_) => {
+                println!("{}\n[FAIL] Failed to read user choice. Denying operation.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
+                return false;
+            }
+            Ok(_) => {}
         }
 
         let choice = input.trim().to_lowercase();
-        let allowed = match choice.as_str() {
-            "" | "y" | "yes" => {
+        let effective_choice = if choice.is_empty() {
+            default_choice
+        } else {
+            choice.as_str()
+        };
+
+        let allowed = match effective_choice {
+            "y" | "yes" => {
                 println!("{}[OK] Permission granted for single execution.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
                 true
             }
             "s" | "session" => {
                 if let Some(p) = suggest_path {
                     self.session_allowed_paths.insert(p.to_path_buf());
-                } else if tool_name == "run_command" {
-                    let cmd_prefix = details.strip_prefix("Command: ").unwrap_or(details).trim().to_string();
+                } else if tool_name == "run_command" || tool_name == "run_tests" || tool_name == "start_daemon" {
+                    let cmd_prefix = details.strip_prefix("Command: ")
+                        .or_else(|| details.strip_prefix("Daemon command: "))
+                        .unwrap_or(details)
+                        .trim()
+                        .to_string();
                     self.session_allowed_commands.insert(cmd_prefix);
                 }
                 println!("{}[OK] Permission granted for this entire session.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
@@ -265,12 +382,63 @@ impl PermissionGate {
                 }
             }
             _ => {
-                println!("{}[DENIED] Operation aborted by user.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                println!("{}[DENIED] Operation aborted by security policy.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
                 false
             }
         };
 
         println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
         allowed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_gate_chained_command_interception() {
+        let gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+        let workspace = PathBuf::from("/workspace");
+        let args = json!({ "command": "git status; rm -rf ~" });
+
+        let decision = gate.evaluate("run_command", &args, &workspace);
+        match decision {
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Critical);
+            }
+            other => panic!("Expected Critical prompt, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_gate_run_tests_interception() {
+        let gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+        let workspace = PathBuf::from("/workspace");
+        let args = json!({ "command": "cargo test && rm -rf /" });
+
+        let decision = gate.evaluate("run_tests", &args, &workspace);
+        match decision {
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Critical);
+            }
+            other => panic!("Expected Critical prompt, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_gate_path_traversal_non_existent_file() {
+        let gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+        let workspace = PathBuf::from("/home/user/workspace");
+        let args = json!({ "path": "../../etc/shadow" });
+
+        let decision = gate.evaluate("view_file", &args, &workspace);
+        match decision {
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert!(risk_level == RiskLevel::Medium || risk_level == RiskLevel::High);
+            }
+            other => panic!("Expected Prompt for path traversal, got: {:?}", other),
+        }
     }
 }

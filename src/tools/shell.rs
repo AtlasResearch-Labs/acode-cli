@@ -54,8 +54,8 @@ impl ShellTools {
 
         cmd.current_dir(target_cwd);
 
-        match cmd.output().await {
-            Ok(output) => {
+        match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+            Ok(Ok(output)) => {
                 let duration_ms = start.elapsed().as_millis();
                 let exit_code = output.status.code().unwrap_or(1);
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -69,13 +69,23 @@ impl ShellTools {
                     duration_ms,
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let duration_ms = start.elapsed().as_millis();
                 ExecResult {
                     success: false,
                     stdout: String::new(),
                     stderr: format!("Failed to spawn process: {}", e),
                     exit_code: 1,
+                    duration_ms,
+                }
+            }
+            Err(_) => {
+                let duration_ms = start.elapsed().as_millis();
+                ExecResult {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "Process execution timed out after 120 seconds.".to_string(),
+                    exit_code: 124,
                     duration_ms,
                 }
             }

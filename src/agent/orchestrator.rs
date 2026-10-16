@@ -185,6 +185,7 @@ impl DaedalusOrchestrator {
             let chat_msgs: Vec<ChatMessage> = self.history.iter().map(|m| ChatMessage {
                 role: m.role.clone(),
                 content: m.content.clone(),
+                tool_calls: m.tool_calls.clone(),
                 tool_call_id: m.tool_call_id.clone(),
                 name: m.name.clone(),
             }).collect();
@@ -194,7 +195,7 @@ impl DaedalusOrchestrator {
                 self.history = compressed.into_iter().map(|c| LLMMessage {
                     role: c.role,
                     content: c.content,
-                    tool_calls: None,
+                    tool_calls: c.tool_calls,
                     tool_call_id: c.tool_call_id,
                     name: c.name,
                 }).collect();
@@ -425,7 +426,31 @@ impl DaedalusOrchestrator {
                         if let Some(repair_calls) = repair_res.tool_calls {
                             for call in &repair_calls {
                                 on_event(AgentEvent::ToolStart { name: &call.name, args: &call.arguments });
-                                let (success, output) = self.tools.execute_tool(&call.name, &call.arguments).await;
+
+                                let decision = self.security.evaluate(&call.name, &call.arguments, &self.workspace_root);
+                                let (success, output): (bool, String) = match decision {
+                                    PermissionDecision::Allow => {
+                                        self.tools.execute_tool(&call.name, &call.arguments).await
+                                    }
+                                    PermissionDecision::Deny(reason) => {
+                                        (false, format!("[SECURITY POLICY DENIED] Operation aborted: {}", reason))
+                                    }
+                                    PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+                                        let allowed = self.security.prompt_user_interactive(
+                                            &call.name,
+                                            &reason,
+                                            &details,
+                                            risk_level,
+                                            suggest_trust_path.as_deref(),
+                                        );
+                                        if allowed {
+                                            self.tools.execute_tool(&call.name, &call.arguments).await
+                                        } else {
+                                            (false, "[USER DENIED] Security permission rejected by operator.".to_string())
+                                        }
+                                    }
+                                };
+
                                 on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
                                 self.history.push(LLMMessage {
                                     role: "tool".to_string(),

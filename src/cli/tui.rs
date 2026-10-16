@@ -42,6 +42,13 @@ impl TuiRenderer {
         println!("{}{}{}\n", Self::CYAN, border, Self::RESET);
     }
 
+    pub fn safe_truncate(s: &str, max_chars: usize) -> &str {
+        match s.char_indices().nth(max_chars) {
+            Some((idx, _)) => &s[..idx],
+            None => s,
+        }
+    }
+
     pub fn print_thinking(status: &str) {
         print!("\r{}[ACODE] {}{}", Self::DIM, status, Self::RESET);
         let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -49,8 +56,8 @@ impl TuiRenderer {
 
     pub fn print_tool_start(name: &str, args: &serde_json::Value) {
         let compact = args.to_string();
-        let trimmed = if compact.len() > 80 {
-            format!("{}...", &compact[..77])
+        let trimmed = if compact.chars().count() > 80 {
+            format!("{}...", Self::safe_truncate(&compact, 77))
         } else {
             compact
         };
@@ -66,8 +73,8 @@ impl TuiRenderer {
         } else {
             format!("{}[FAIL]{}", Self::RED, Self::RESET)
         };
-        let preview = if output.len() > 300 {
-            format!("{}...", &output[..297])
+        let preview = if output.chars().count() > 300 {
+            format!("{}...", Self::safe_truncate(output, 297))
         } else {
             output.to_string()
         };
@@ -82,7 +89,7 @@ impl TuiRenderer {
         };
         println!("\n{} {}{}{}", tag, Self::CYAN, command, Self::RESET);
         if !passed {
-            let snippet = if output.len() > 500 { &output[..500] } else { output };
+            let snippet = if output.chars().count() > 500 { Self::safe_truncate(output, 500) } else { output };
             println!("{}{}{}", Self::RED, snippet, Self::RESET);
         }
     }

@@ -176,8 +176,8 @@ impl ProviderRouter {
     async fn complete_gemini(&self, messages: &[LLMMessage], tools: &[ToolDefinition]) -> Result<LLMResponse, String> {
         let api_key = self.config.api_key.clone().or_else(|| env::var("GEMINI_API_KEY").ok()).unwrap_or_default();
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.config.model, api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.config.model
         );
 
         let system_text = messages.iter().find(|m| m.role == "system").map(|m| m.content.clone());
@@ -238,16 +238,18 @@ impl ProviderRouter {
             body["tools"] = json!([{ "functionDeclarations": func_decls }]);
         }
 
-        let req = self.client.post(&url).json(&body);
+        let req = self.client.post(&url)
+            .header("x-goog-api-key", &api_key)
+            .json(&body);
         let mut resp = self.post_with_retry(req, "GEMINI").await?;
 
         if resp.status().as_u16() == 429 && self.config.model != "gemini-2.0-flash" {
-            let fallback_url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}",
-                api_key
-            );
+            let fallback_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
             println!("\n{}[ACODE] Active model '{}' reached rate limit (429). Automatically falling back to gemini-2.0-flash (1,500 RPD)...{}\n", crate::cli::tui::TuiRenderer::YELLOW, self.config.model, crate::cli::tui::TuiRenderer::RESET);
-            if let Ok(fb_resp) = self.client.post(&fallback_url).json(&body).send().await {
+            let fb_req = self.client.post(fallback_url)
+                .header("x-goog-api-key", &api_key)
+                .json(&body);
+            if let Ok(fb_resp) = fb_req.send().await {
                 if fb_resp.status().is_success() {
                     resp = fb_resp;
                 }

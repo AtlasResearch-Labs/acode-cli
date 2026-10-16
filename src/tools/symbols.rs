@@ -122,7 +122,7 @@ impl SymbolEngine {
                         count += 1;
                     }
 
-                    let replaced = re.replace_all(&content, new_name).to_string();
+                    let replaced = re.replace_all(&content, regex::NoExpand(new_name)).to_string();
                     if let Ok(_) = fs::write(&file, replaced) {
                         let rel = file.strip_prefix(&self.workspace_root)
                             .unwrap_or(&file)

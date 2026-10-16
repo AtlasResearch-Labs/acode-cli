@@ -25,6 +25,10 @@ pub struct BlackBoxEvent {
     pub source: String,
     pub payload_summary: String,
     pub payload_hash: String,
+    #[serde(default)]
+    pub prev_hash: Option<String>,
+    #[serde(default)]
+    pub chain_hash: Option<String>,
     pub duration_ms: Option<u64>,
     pub status: String,
 }
@@ -41,6 +45,24 @@ impl BlackBoxRecorder {
         Self { log_file }
     }
 
+    pub fn get_last_chain_hash(&self) -> String {
+        if !self.log_file.exists() {
+            return "0000000000000000".to_string();
+        }
+
+        if let Ok(content) = fs::read_to_string(&self.log_file) {
+            for line in content.lines().rev() {
+                if let Ok(evt) = serde_json::from_str::<BlackBoxEvent>(line) {
+                    if let Some(ch) = evt.chain_hash {
+                        return ch;
+                    }
+                    return evt.payload_hash;
+                }
+            }
+        }
+        "0000000000000000".to_string()
+    }
+
     pub fn record(
         &self,
         event_type: &str,
@@ -49,7 +71,10 @@ impl BlackBoxRecorder {
         duration_ms: Option<u64>,
         status: &str,
     ) -> BlackBoxEvent {
-        let hash = fnv1a_hash(payload.as_bytes());
+        let prev_hash = self.get_last_chain_hash();
+        let payload_hash = fnv1a_hash(payload.as_bytes());
+        let chain_material = format!("{}:{}:{}:{}", prev_hash, event_type, source, payload_hash);
+        let chain_hash = fnv1a_hash(chain_material.as_bytes());
 
         let summary = if payload.len() > 200 {
             let mut end = 200;
@@ -67,7 +92,9 @@ impl BlackBoxRecorder {
             event_type: event_type.to_string(),
             source: source.to_string(),
             payload_summary: summary,
-            payload_hash: hash,
+            payload_hash,
+            prev_hash: Some(prev_hash),
+            chain_hash: Some(chain_hash),
             duration_ms,
             status: status.to_string(),
         };
@@ -79,6 +106,36 @@ impl BlackBoxRecorder {
         }
 
         event
+    }
+
+    pub fn verify_chain(&self) -> (bool, usize) {
+        if !self.log_file.exists() {
+            return (true, 0);
+        }
+
+        if let Ok(content) = fs::read_to_string(&self.log_file) {
+            let mut expected_prev = "0000000000000000".to_string();
+            let mut verified_count = 0;
+            for line in content.lines() {
+                if let Ok(evt) = serde_json::from_str::<BlackBoxEvent>(line) {
+                    if let (Some(prev), Some(chain)) = (&evt.prev_hash, &evt.chain_hash) {
+                        if prev != &expected_prev {
+                            return (false, verified_count);
+                        }
+                        let chain_material = format!("{}:{}:{}:{}", prev, evt.event_type, evt.source, evt.payload_hash);
+                        let computed = fnv1a_hash(chain_material.as_bytes());
+                        if &computed != chain {
+                            return (false, verified_count);
+                        }
+                        expected_prev = chain.clone();
+                        verified_count += 1;
+                    }
+                }
+            }
+            (true, verified_count)
+        } else {
+            (true, 0)
+        }
     }
 
     pub fn read_recent_events(&self, count: usize) -> Vec<BlackBoxEvent> {
@@ -117,13 +174,21 @@ mod tests {
 
     #[test]
     fn test_record_and_read_event() {
-        let recorder = BlackBoxRecorder::new("target");
+        let temp_dir = std::env::temp_dir().join(format!("daedalus_test_{}", rand_suffix()));
+        let _ = fs::create_dir_all(&temp_dir);
+        let recorder = BlackBoxRecorder::new(&temp_dir);
         let evt = recorder.record("test_event", "unit_test", "hello world payload", Some(42), "OK");
         assert_eq!(evt.event_type, "test_event");
         assert_eq!(evt.status, "OK");
         assert!(!evt.payload_hash.is_empty());
+        assert!(evt.chain_hash.is_some());
 
         let recents = recorder.read_recent_events(5);
         assert!(!recents.is_empty());
+
+        let (valid, count) = recorder.verify_chain();
+        assert!(valid);
+        assert!(count >= 1);
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

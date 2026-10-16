@@ -202,6 +202,130 @@ impl SlashCommandHandler {
                 println!("CPU Cores: {} · System Uptime: {}s\n", metrics.cpu_count, metrics.uptime_secs);
                 true
             }
+            "/host" | "/metrics" => {
+                let m = crate::telemetry::host::HostInspector::collect();
+                println!("\n{}[HOST TELEMETRY METRICS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                println!("  Operating System: {}{}{}", TuiRenderer::CYAN, m.os_name, TuiRenderer::RESET);
+                println!("  CPU Cores:        {}{}{}", TuiRenderer::CYAN, m.cpu_cores, TuiRenderer::RESET);
+                println!("  Free Memory:      {}{}{} MB (Total: {} MB)", TuiRenderer::GREEN, m.available_memory_mb, TuiRenderer::RESET, m.total_memory_mb);
+                println!("  Process RSS:      {}{}{} MB", TuiRenderer::YELLOW, m.process_rss_mb, TuiRenderer::RESET);
+                let hours = m.uptime_secs / 3600;
+                let mins = (m.uptime_secs % 3600) / 60;
+                let secs = m.uptime_secs % 60;
+                println!("  System Uptime:    {}h {}m {}s ({}s)\n", hours, mins, secs, m.uptime_secs);
+                true
+            }
+            "/mcp" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() || parts[0].eq_ignore_ascii_case("list") {
+                    let servers = orchestrator.tools.mcp.list_servers();
+                    println!("\n{}[MODEL CONTEXT PROTOCOL (MCP) REGISTRY]{} (Total: {})", TuiRenderer::BOLD, TuiRenderer::RESET, servers.len());
+                    if servers.is_empty() {
+                        println!("  No MCP servers registered in .daedalus/mcp.json or ~/.daedalus/mcp.json.");
+                        println!("  Add one via: /mcp add <name> <command> [args...]\n");
+                    } else {
+                        for (name, cfg, tool_count) in servers {
+                            let tool_badge = if tool_count > 0 {
+                                format!("{}[{} tools]{}", TuiRenderer::GREEN, tool_count, TuiRenderer::RESET)
+                            } else {
+                                format!("{}[0 tools]{}", TuiRenderer::DIM, TuiRenderer::RESET)
+                            };
+                            println!("  - {}{}{} | {} {}", TuiRenderer::CYAN, name, TuiRenderer::RESET, cfg.command, tool_badge);
+                            if !cfg.args.is_empty() {
+                                println!("    Args: {}", cfg.args.join(" "));
+                            }
+                        }
+                        println!("\nCommands: /mcp refresh | /mcp add <name> <cmd> [args] | /mcp remove <name>\n");
+                    }
+                    return true;
+                }
+
+                match parts[0].to_lowercase().as_str() {
+                    "refresh" => {
+                        println!("{}[ACODE] Probing MCP servers and discovering tools...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                        orchestrator.tools.mcp.reload_configs();
+                        orchestrator.tools.mcp.refresh_tools().await;
+                        let count = orchestrator.tools.mcp.get_definitions().len();
+                        println!("{}[OK] Discovered {} MCP tools across active servers.{}\n", TuiRenderer::GREEN, count, TuiRenderer::RESET);
+                    }
+                    "add" => {
+                        if parts.len() < 3 {
+                            println!("{}Usage: /mcp add <server_name> <command> [args...]{}\n  Example: /mcp add sqlite uvx mcp-server-sqlite --db-path ./data.db\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        let name = parts[1];
+                        let command = parts[2];
+                        let args: Vec<String> = parts[3..].iter().map(|s| s.to_string()).collect();
+
+                        println!("{}[ACODE] Registering MCP server '{}' in .daedalus/mcp.json...{}", TuiRenderer::DIM, name, TuiRenderer::RESET);
+                        match orchestrator.tools.mcp.add_server(name, command, args).await {
+                            Ok(_) => {
+                                let defs = orchestrator.tools.mcp.get_definitions();
+                                let tool_count = defs.iter().filter(|d| d.name.starts_with(&format!("mcp__{}__", name))).count();
+                                println!("{}[OK] MCP server '{}' added and connected! Discovered {} tools.{}\n", TuiRenderer::GREEN, name, tool_count, TuiRenderer::RESET);
+                            }
+                            Err(e) => println!("{}[FAIL] Failed to register MCP server: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
+                    "remove" | "rm" => {
+                        if parts.len() < 2 {
+                            println!("{}Usage: /mcp remove <server_name>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            return true;
+                        }
+                        let name = parts[1];
+                        match orchestrator.tools.mcp.remove_server(name).await {
+                            Ok(true) => println!("{}[OK] MCP server '{}' removed from .daedalus/mcp.json and disconnected.{}\n", TuiRenderer::GREEN, name, TuiRenderer::RESET),
+                            Ok(false) => println!("{}[WARN] MCP server '{}' was not registered in .daedalus/mcp.json.{}\n", TuiRenderer::YELLOW, name, TuiRenderer::RESET),
+                            Err(e) => println!("{}[FAIL] Error removing server: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
+                    _ => {
+                        println!("{}Usage: /mcp [list | refresh | add <name> <cmd> [args...] | remove <name>]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
+            "/swarm" => {
+                if arg.is_empty() {
+                    println!("{}Usage: /swarm <complex objective to delegate>{}\n  Example: /swarm add comprehensive tests for host metrics and verify build\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    return true;
+                }
+                println!("\n{}[MULTI-AGENT SWARM ACTIVE]{} Delegating objective to Explorer, Coder, and Verifier...", TuiRenderer::BOLD, TuiRenderer::RESET);
+                println!("Goal: {}{}{}\n", TuiRenderer::CYAN, arg, TuiRenderer::RESET);
+
+                let res = orchestrator.run_swarm(arg, |event| match event {
+                    AgentEvent::Thinking(s) => TuiRenderer::print_thinking(s),
+                    AgentEvent::Token(tok) => {
+                        print!("{}", tok);
+                        let _ = std::io::Write::flush(&mut std::io::stdout());
+                    }
+                    AgentEvent::ToolStart { name, args } => TuiRenderer::print_tool_start(name, args),
+                    AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
+                    AgentEvent::TestResult { command, passed, output } => TuiRenderer::print_test_result(command, passed, output),
+                    AgentEvent::Error(e) => TuiRenderer::print_error(e),
+                    _ => {}
+                }).await;
+
+                match res {
+                    Ok(outcome) => {
+                        println!("\n{}[SWARM EXECUTION COMPLETE]{} in {}ms", TuiRenderer::BOLD, TuiRenderer::RESET, outcome.duration_ms);
+                        if !outcome.files_modified.is_empty() {
+                            println!("  Files Modified: {}{}{}", TuiRenderer::GREEN, outcome.files_modified.join(", "), TuiRenderer::RESET);
+                        }
+                        let verif_badge = if outcome.verification_passed {
+                            format!("{}[PASSED]{}", TuiRenderer::GREEN, TuiRenderer::RESET)
+                        } else {
+                            format!("{}[FAILED]{}", TuiRenderer::RED, TuiRenderer::RESET)
+                        };
+                        println!("  Verification:   {}\n", verif_badge);
+                        if !outcome.coder_summary.is_empty() {
+                            println!("{}\n", outcome.coder_summary);
+                        }
+                    }
+                    Err(e) => TuiRenderer::print_error(&format!("Swarm coordination failed: {}", e)),
+                }
+                true
+            }
             "/commit" => {
                 if arg.is_empty() {
                     println!("{}Usage: /commit <commit message>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
@@ -1113,6 +1237,9 @@ impl SlashCommandHandler {
         println!("  {}/cost{}            - Display Chronicle token usage and USD costs", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/audit{}           - Run Argus AST code review and secret scan", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/tunnel <port>{}  - Spawn a public HTTPS Beacon tunnel", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/swarm <goal>{}    - Autonomous multi-agent swarm delegation (Explorer -> Coder -> Verifier)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/mcp [action]{}    - Model Context Protocol server suite (list, refresh, add, remove)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/host{}            - Live host metrics (CPU cores, free RAM, process RSS, uptime)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/pulse{}           - View live OS host memory and CPU metrics", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/model <name>{}   - Switch active LLM model", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/key <p> <key>{}   - Configure API key (gemini, anthropic, openai, powerbox)", TuiRenderer::CYAN, TuiRenderer::RESET);

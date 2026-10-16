@@ -314,6 +314,75 @@ impl McpManager {
         self.cached_definitions = definitions;
     }
 
+    pub fn reload_configs(&mut self) {
+        self.server_configs = Self::discover_configs(&self.workspace_root);
+    }
+
+    pub async fn add_server(&mut self, name: &str, command: &str, args: Vec<String>) -> Result<(), String> {
+        let daedalus_dir = self.workspace_root.join(".daedalus");
+        let _ = std::fs::create_dir_all(&daedalus_dir);
+        let mcp_path = daedalus_dir.join("mcp.json");
+
+        let mut cfg_file = if mcp_path.exists() {
+            let content = std::fs::read_to_string(&mcp_path).unwrap_or_default();
+            serde_json::from_str::<McpConfigFile>(&content).unwrap_or_default()
+        } else {
+            McpConfigFile::default()
+        };
+
+        cfg_file.mcp_servers.insert(name.to_string(), McpServerConfig {
+            command: command.to_string(),
+            args,
+            env: HashMap::new(),
+        });
+
+        let serialized = serde_json::to_string_pretty(&cfg_file).map_err(|e| format!("Failed to serialize mcp.json: {}", e))?;
+        std::fs::write(&mcp_path, serialized).map_err(|e| format!("Failed to write {}: {}", mcp_path.display(), e))?;
+
+        self.reload_configs();
+        self.refresh_tools().await;
+        Ok(())
+    }
+
+    pub async fn remove_server(&mut self, name: &str) -> Result<bool, String> {
+        let daedalus_dir = self.workspace_root.join(".daedalus");
+        let mcp_path = daedalus_dir.join("mcp.json");
+        let mut found = false;
+
+        if mcp_path.exists() {
+            let content = std::fs::read_to_string(&mcp_path).unwrap_or_default();
+            if let Ok(mut cfg_file) = serde_json::from_str::<McpConfigFile>(&content) {
+                if cfg_file.mcp_servers.remove(name).is_some() {
+                    found = true;
+                    let serialized = serde_json::to_string_pretty(&cfg_file).map_err(|e| format!("Failed to serialize mcp.json: {}", e))?;
+                    std::fs::write(&mcp_path, serialized).map_err(|e| format!("Failed to write {}: {}", mcp_path.display(), e))?;
+                }
+            }
+        }
+
+        {
+            let mut sessions_guard = self.sessions.lock().await;
+            sessions_guard.remove(name);
+        }
+
+        self.reload_configs();
+        let prefix = format!("mcp__{}__", name);
+        self.cached_definitions.retain(|d| !d.name.starts_with(&prefix));
+
+        Ok(found)
+    }
+
+    pub fn list_servers(&self) -> Vec<(String, McpServerConfig, usize)> {
+        let mut list = Vec::new();
+        for (name, cfg) in &self.server_configs {
+            let prefix = format!("mcp__{}__", name);
+            let count = self.cached_definitions.iter().filter(|d| d.name.starts_with(&prefix)).count();
+            list.push((name.clone(), cfg.clone(), count));
+        }
+        list.sort_by(|a, b| a.0.cmp(&b.0));
+        list
+    }
+
     pub fn get_definitions(&self) -> Vec<ToolDefinition> {
         self.cached_definitions.clone()
     }
@@ -413,5 +482,28 @@ mod tests {
         let invalid = "view_file";
         let invalid_parts: Vec<&str> = invalid.splitn(3, "__").collect();
         assert_ne!(invalid_parts[0], "mcp");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_manager_add_and_remove() {
+        let temp_dir = std::env::temp_dir().join(format!("daedalus_mcp_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let mut mgr = McpManager::new(&temp_dir);
+        assert_eq!(mgr.list_servers().len(), 0);
+
+        let res = mgr.add_server("dummy", "node", vec!["server.js".to_string()]).await;
+        assert!(res.is_ok());
+
+        let list = mgr.list_servers();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "dummy");
+        assert_eq!(list[0].1.command, "node");
+
+        let rm_res = mgr.remove_server("dummy").await;
+        assert_eq!(rm_res, Ok(true));
+        assert_eq!(mgr.list_servers().len(), 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

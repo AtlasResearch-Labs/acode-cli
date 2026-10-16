@@ -141,6 +141,22 @@ impl DaedalusOrchestrator {
         self.run_task(&prompt, on_event).await
     }
 
+    pub async fn run_swarm<F>(&mut self, goal: &str, on_event: F) -> Result<crate::agent::swarm::SwarmOutcome, String>
+    where
+        F: FnMut(AgentEvent) + Send,
+    {
+        self.tools.refresh_mcp_tools().await;
+        let mut coordinator = crate::agent::swarm::SwarmCoordinator::new(
+            &self.workspace_root,
+            &mut self.provider,
+            &mut self.tools,
+            &mut self.memory,
+            &mut self.security,
+            &mut self.blackbox,
+        );
+        coordinator.execute_pipeline(goal, on_event).await
+    }
+
     pub async fn run_task<F>(&mut self, user_goal: &str, mut on_event: F) -> Result<String, String>
     where
         F: FnMut(AgentEvent) + Send,

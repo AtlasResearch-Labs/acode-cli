@@ -17,6 +17,7 @@ impl DaedalusREPL {
     }
 
     async fn render_prompt(&self) -> String {
+        let metrics = crate::telemetry::host::HostInspector::collect();
         let folder_name = self.orchestrator.workspace_root
             .file_name()
             .and_then(|n| n.to_str())
@@ -32,8 +33,11 @@ impl DaedalusREPL {
             String::new()
         };
 
+        let model = &self.orchestrator.provider.config.model;
+        let sec_mode = self.orchestrator.security.config.mode.to_string();
+
         format!(
-            "{}{}daedalus {}{}[{}{}{}]{}>{} ",
+            "{}{}daedalus {}{}[{}{}{}]{} ({}{}{} | {}MB | {}{}{})>{} ",
             TuiRenderer::BOLD,
             TuiRenderer::CYAN,
             TuiRenderer::RESET,
@@ -41,7 +45,14 @@ impl DaedalusREPL {
             folder_name,
             TuiRenderer::GREEN,
             git_info,
+            TuiRenderer::RESET,
             TuiRenderer::CYAN,
+            model,
+            TuiRenderer::RESET,
+            metrics.process_rss_mb,
+            TuiRenderer::YELLOW,
+            sec_mode,
+            TuiRenderer::RESET,
             TuiRenderer::RESET
         )
     }
@@ -64,6 +75,7 @@ impl DaedalusREPL {
 
         let security = self.orchestrator.security.config.mode.to_string();
         TuiRenderer::print_header(&root, &model, &provider, &security);
+        TuiRenderer::print_status_bar(&model, &provider, &security);
 
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin).lines();

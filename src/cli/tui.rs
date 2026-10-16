@@ -94,18 +94,70 @@ impl TuiRenderer {
         }
     }
 
+    pub fn print_status_bar(model: &str, provider: &str, security: &str) {
+        let metrics = crate::telemetry::host::HostInspector::collect();
+        let sec_color = match security {
+            "full" => Self::GREEN,
+            "sandboxed" => Self::YELLOW,
+            "strict" => Self::RED,
+            _ => Self::CYAN,
+        };
+        let border = "-".repeat(78);
+        println!("{}{}{}", Self::DIM, border, Self::RESET);
+        println!(
+            "{}[HOST: {} | CPU: {}C | RAM: {}MB free / {}MB | RSS: {}MB | Model: {}{} ({}) | Sec: {}{}{}]{}",
+            Self::DIM,
+            metrics.os_name,
+            metrics.cpu_cores,
+            metrics.available_memory_mb,
+            metrics.total_memory_mb,
+            metrics.process_rss_mb,
+            Self::CYAN,
+            model,
+            provider,
+            sec_color,
+            security,
+            Self::DIM,
+            Self::RESET
+        );
+        println!("{}{}{}\n", Self::DIM, border, Self::RESET);
+    }
+
     pub fn print_diff(diff_text: &str) {
+        let mut additions = 0usize;
+        let mut deletions = 0usize;
+
         for line in diff_text.lines() {
-            if line.starts_with('+') {
-                println!("{}{}{}", Self::GREEN, line, Self::RESET);
-            } else if line.starts_with('-') {
-                println!("{}{}{}", Self::RED, line, Self::RESET);
-            } else if line.starts_with("@@") {
-                println!("{}{}{}", Self::CYAN, line, Self::RESET);
-            } else {
-                println!("{}{}{}", Self::GRAY, line, Self::RESET);
+            if line.starts_with('+') && !line.starts_with("+++") {
+                additions += 1;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                deletions += 1;
             }
         }
+
+        if additions > 0 || deletions > 0 {
+            println!(
+                "\n{}[DIFF SUMMARY]{} {}+{} additions{} / {}-{} deletions{}",
+                Self::BOLD, Self::RESET,
+                Self::GREEN, additions, Self::RESET,
+                Self::RED, deletions, Self::RESET
+            );
+        }
+
+        for (idx, line) in diff_text.lines().enumerate() {
+            if line.starts_with("+++") || line.starts_with("---") {
+                println!("{}  {:4} | {}{}", Self::DIM, idx + 1, line, Self::RESET);
+            } else if line.starts_with('+') {
+                println!("{}+ {:4} | {}{}", Self::GREEN, idx + 1, line, Self::RESET);
+            } else if line.starts_with('-') {
+                println!("{}- {:4} | {}{}", Self::RED, idx + 1, line, Self::RESET);
+            } else if line.starts_with("@@") {
+                println!("{}~ {:4} | {}{}", Self::CYAN, idx + 1, line, Self::RESET);
+            } else {
+                println!("{}  {:4} | {}{}", Self::GRAY, idx + 1, line, Self::RESET);
+            }
+        }
+        println!();
     }
 
     pub fn print_success(message: &str) {

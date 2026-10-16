@@ -279,8 +279,28 @@ impl SlashCommandHandler {
                             Err(e) => println!("{}[FAIL] Error removing server: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
                         }
                     }
+                    "trust" => {
+                        println!("{}[ACODE] Approving and pinning project MCP configuration...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                        match orchestrator.tools.mcp.trust_project_config() {
+                            Ok(msg) => {
+                                println!("{}[OK] {}{}\n", TuiRenderer::GREEN, msg, TuiRenderer::RESET);
+                                orchestrator.tools.mcp.refresh_tools().await;
+                            }
+                            Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
+                    "untrust" => {
+                        println!("{}[ACODE] Revoking trust for project MCP configuration...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                        match orchestrator.tools.mcp.revoke_project_config() {
+                            Ok(msg) => {
+                                println!("{}[OK] {}{}\n", TuiRenderer::GREEN, msg, TuiRenderer::RESET);
+                                orchestrator.tools.mcp.refresh_tools().await;
+                            }
+                            Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
                     _ => {
-                        println!("{}Usage: /mcp [list | refresh | add <name> <cmd> [args...] | remove <name>]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                        println!("{}Usage: /mcp [list | refresh | trust | untrust | add <name> <cmd> [args...] | remove <name>]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
                     }
                 }
                 true

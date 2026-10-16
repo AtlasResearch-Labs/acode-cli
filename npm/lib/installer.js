@@ -23,21 +23,21 @@ function resolveExistingBinary(base) {
   if (isAndroid) {
     // Android Bionic native targets (Termux)
     candidates.push(
-      path.join(__dirname, '..', 'bin', 'native', `${base}-android-${arch}`),
-      path.join(__dirname, '..', 'bin', 'native', `${base}-android-arm64`),
-      path.join(__dirname, '..', 'bin', 'native', `${base}-linux-${arch}`)
+      path.join(__dirname, '..', 'bin', `${base}-android-${arch}`),
+      path.join(__dirname, '..', 'bin', `${base}-android-arm64`),
+      path.join(__dirname, '..', 'bin', `${base}-linux-${arch}`)
     );
   } else {
-    // Desktop POSIX and Windows targets
+    // Desktop POSIX, macOS, and Windows targets
     candidates.push(
-      path.join(__dirname, '..', 'bin', 'native', `${base}-${platform}-${arch}${isWin ? '.exe' : ''}`),
-      path.join(__dirname, '..', 'bin', 'native', `${base}-${key}${isWin ? '.exe' : ''}`)
+      path.join(__dirname, '..', 'bin', `${base}-${platform === 'win32' ? 'win' : platform}-${arch}${isWin ? '.exe' : ''}`),
+      path.join(__dirname, '..', 'bin', `${base}-${platform}-${arch}${isWin ? '.exe' : ''}`),
+      path.join(__dirname, '..', 'bin', `${base}-${key}${isWin ? '.exe' : ''}`),
+      path.join(__dirname, '..', 'bin', isWin ? `${base}-win-x64.exe` : `${base}-linux-x64`)
     );
   }
 
   candidates.push(
-    // Generic binary name in bin/native/
-    path.join(__dirname, '..', 'bin', 'native', isWin ? `${base}.exe` : base),
     // User global daedalus binary cache ~/.daedalus/bin/
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.daedalus', 'bin', isWin ? `${base}.exe` : base),
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.daedalus', 'bin', `${base}-${key}${isWin ? '.exe' : ''}`),

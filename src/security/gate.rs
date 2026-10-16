@@ -285,16 +285,141 @@ impl PermissionGate {
             };
         }
 
-        if tool_name.starts_with("mcp__") && self.config.mode == SecurityMode::Strict {
+        // Memory updates: Protect persistent instructions against prompt injection
+        if tool_name == "update_memory" {
+            let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("project");
+            if self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires explicit confirmation before modifying persistent memory".to_string(),
+                    details: format!("Target Scope: {} memory", scope),
+                    risk_level: RiskLevel::High,
+                    suggest_trust_path: None,
+                };
+            }
+            if scope == "user" {
+                return PermissionDecision::Prompt {
+                    reason: "Modifying global user preferences profile (~/.daedalus/USER.md)".to_string(),
+                    details: "Global memory modifications persist across all workspaces".to_string(),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        // Outbound web fetch
+        if tool_name == "web_fetch" {
+            if self.config.mode == SecurityMode::Strict {
+                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires confirmation for outbound HTTP requests".to_string(),
+                    details: format!("Target URL: {}", url),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        // Symbol refactoring across multiple files
+        if tool_name == "rename_symbol" {
+            if self.config.mode == SecurityMode::Strict {
+                let old = args.get("old_name").and_then(|v| v.as_str()).unwrap_or("");
+                let new = args.get("new_name").and_then(|v| v.as_str()).unwrap_or("");
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires confirmation before cross-file symbol refactoring".to_string(),
+                    details: format!("Rename symbol '{}' -> '{}'", old, new),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        // Multi-agent swarm orchestration & subagent delegation
+        if tool_name == "spawn_swarm" || tool_name == "delegate_task" {
+            if self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires human approval before spawning autonomous subagents".to_string(),
+                    details: format!("Subagent parameters: {}", args),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        // Shadow workspace git worktree operations
+        if tool_name == "manage_sandbox" || tool_name == "create_shadow_workspace" {
+            if self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires confirmation for shadow workspace git worktrees".to_string(),
+                    details: format!("Sandbox action: {}", args),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        // Argus AST audit tool
+        if tool_name == "argus_audit" || tool_name == "run_argus_audit" {
+            if self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: "Strict mode requires confirmation for external Argus AST audit tool".to_string(),
+                    details: format!("Target: {}", args),
+                    risk_level: RiskLevel::Low,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        if tool_name == "kill_daemon" && self.config.mode == SecurityMode::Strict {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
             return PermissionDecision::Prompt {
-                reason: format!("Strict mode requires human approval for external MCP tool '{}'", tool_name),
-                details: format!("Arguments: {}", args),
+                reason: "Strict mode requires confirmation to terminate background daemon".to_string(),
+                details: format!("Daemon ID: {}", id),
                 risk_level: RiskLevel::Medium,
                 suggest_trust_path: None,
             };
         }
 
-        PermissionDecision::Allow
+        if tool_name.starts_with("mcp__") {
+            if self.config.mode == SecurityMode::Strict {
+                return PermissionDecision::Prompt {
+                    reason: format!("Strict mode requires human approval for external MCP tool '{}'", tool_name),
+                    details: format!("Arguments: {}", args),
+                    risk_level: RiskLevel::Medium,
+                    suggest_trust_path: None,
+                };
+            }
+            return PermissionDecision::Allow;
+        }
+
+        // Safe read-only tools that do not mutate files, state, or network
+        let is_safe_readonly = matches!(
+            tool_name,
+            "view_file" | "list_dir" | "search_code" | "extract_symbols" | "find_symbols" |
+            "git_status" | "git_diff" | "list_workspaces" | "list_daemons" | "daemon_logs" |
+            "web_search"
+        );
+
+        if is_safe_readonly {
+            return PermissionDecision::Allow;
+        }
+
+        // Unknown or unregistered tools: Default-deny in Strict mode, Default-prompt in Sandboxed mode
+        if self.config.mode == SecurityMode::Strict {
+            return PermissionDecision::Deny(format!("Strict mode prohibits unregistered tool '{}'", tool_name));
+        }
+
+        PermissionDecision::Prompt {
+            reason: format!("Unrecognized tool '{}' requires human authorization", tool_name),
+            details: format!("Arguments: {}", args),
+            risk_level: RiskLevel::Medium,
+            suggest_trust_path: None,
+        }
     }
 
     pub fn prompt_user_interactive(
@@ -486,6 +611,69 @@ mod tests {
                 assert!(reason.contains("Strict mode requires human approval"));
             }
             other => panic!("Expected Strict prompt for MCP tool, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_gate_strict_mode_gated_tools() {
+        let gate = PermissionGate::new(Some(SecurityMode::Strict));
+        let workspace = PathBuf::from("/workspace");
+
+        // update_memory should prompt with High risk in Strict mode
+        let mem_decision = gate.evaluate("update_memory", &json!({ "scope": "project", "content": "note" }), &workspace);
+        match mem_decision {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::High),
+            other => panic!("Expected High prompt for update_memory in Strict mode, got {:?}", other),
+        }
+
+        // web_fetch should prompt in Strict mode
+        let fetch_decision = gate.evaluate("web_fetch", &json!({ "url": "https://example.com" }), &workspace);
+        match fetch_decision {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected Prompt for web_fetch in Strict mode, got {:?}", other),
+        }
+
+        // rename_symbol should prompt in Strict mode
+        let rename_decision = gate.evaluate("rename_symbol", &json!({ "old_name": "foo", "new_name": "bar" }), &workspace);
+        match rename_decision {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected Prompt for rename_symbol in Strict mode, got {:?}", other),
+        }
+
+        // spawn_swarm should prompt in Strict mode
+        let swarm_decision = gate.evaluate("spawn_swarm", &json!({ "goal": "refactor" }), &workspace);
+        match swarm_decision {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected Prompt for spawn_swarm in Strict mode, got {:?}", other),
+        }
+
+        // run_argus_audit should prompt in Strict mode
+        let audit_decision = gate.evaluate("run_argus_audit", &json!({ "target": "." }), &workspace);
+        match audit_decision {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Low),
+            other => panic!("Expected Prompt for run_argus_audit in Strict mode, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_gate_unknown_tool_default_deny_and_prompt() {
+        let strict_gate = PermissionGate::new(Some(SecurityMode::Strict));
+        let sandboxed_gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+        let workspace = PathBuf::from("/workspace");
+        let args = json!({ "foo": "bar" });
+
+        // In Strict mode: Unknown tool MUST Deny
+        let strict_res = strict_gate.evaluate("unknown_third_party_tool", &args, &workspace);
+        match strict_res {
+            PermissionDecision::Deny(reason) => assert!(reason.contains("Strict mode prohibits unregistered tool")),
+            other => panic!("Expected Deny for unknown tool in Strict mode, got {:?}", other),
+        }
+
+        // In Sandboxed mode: Unknown tool MUST Prompt
+        let sandboxed_res = sandboxed_gate.evaluate("unknown_third_party_tool", &args, &workspace);
+        match sandboxed_res {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected Prompt for unknown tool in Sandboxed mode, got {:?}", other),
         }
     }
 }

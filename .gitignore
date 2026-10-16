@@ -7,7 +7,6 @@ npm/bin/acode-*
 *.tgz
 *.zip
 **/*.rs.bk
-Cargo.lock
 
 # Environment & Sensitive Credentials (Rule 6 & Security)
 .env

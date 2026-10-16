@@ -30,6 +30,16 @@ impl PillarTools {
                 let summary = json.get("summary").and_then(|s| s.as_str()).unwrap_or("Argus audit completed.").to_string();
                 return (clean, summary);
             }
+            return (true, "Argus AST review clean. Zero high-risk vulnerabilities detected.".to_string());
+        }
+
+        if !res.success {
+            let err_msg = if res.stderr.trim().is_empty() {
+                format!("Argus audit command failed with exit code {}", res.exit_code)
+            } else {
+                format!("Argus audit failed (exit code {}): {}", res.exit_code, res.stderr.trim())
+            };
+            return (false, err_msg);
         }
 
         (true, "Argus AST review clean. Zero high-risk vulnerabilities detected.".to_string())

@@ -1,6 +1,7 @@
 //! Atlas Daedalus — Git Tools
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use tokio::process::Command;
 use crate::tools::shell::ShellTools;
 
 #[derive(Debug, Clone)]
@@ -14,12 +15,15 @@ pub struct GitStatusResult {
 
 pub struct GitTools {
     shell: ShellTools,
+    workspace_root: PathBuf,
 }
 
 impl GitTools {
     pub fn new<P: AsRef<Path>>(workspace_root: P) -> Self {
+        let p = workspace_root.as_ref().to_path_buf();
         Self {
-            shell: ShellTools::new(workspace_root),
+            shell: ShellTools::new(&p),
+            workspace_root: p,
         }
     }
 
@@ -80,16 +84,41 @@ impl GitTools {
     }
 
     pub async fn commit(&self, message: &str, author: &str) -> Result<String, String> {
-        let _ = self.shell.run_command("git add -A", None).await;
-        let clean_msg = message.replace('"', "\\\"");
-        let cmd = format!("git commit -m \"{}\" --author=\"{}\"", clean_msg, author);
-        let res = self.shell.run_command(&cmd, None).await;
+        // Stage tracked changes if nothing is staged yet (avoids blind git add -A)
+        let staged_diff = self.get_diff(true).await;
+        if staged_diff.trim().is_empty() {
+            let mut add_cmd = Command::new("git");
+            add_cmd.arg("add").arg("-u").current_dir(&self.workspace_root);
+            let _ = add_cmd.output().await;
+        }
 
-        if res.success {
-            let hash_res = self.shell.run_command("git rev-parse --short HEAD", None).await;
-            Ok(hash_res.stdout.trim().to_string())
-        } else {
-            Err(res.stderr)
+        let mut cmd = Command::new("git");
+        cmd.arg("commit")
+            .arg("-m")
+            .arg(message)
+            .arg(format!("--author={}", author))
+            .current_dir(&self.workspace_root);
+
+        match cmd.output().await {
+            Ok(output) => {
+                if output.status.success() {
+                    let mut rev_cmd = Command::new("git");
+                    rev_cmd.arg("rev-parse").arg("--short").arg("HEAD").current_dir(&self.workspace_root);
+                    if let Ok(rev_out) = rev_cmd.output().await {
+                        Ok(String::from_utf8_lossy(&rev_out.stdout).trim().to_string())
+                    } else {
+                        Ok("HEAD".to_string())
+                    }
+                } else {
+                    let err = String::from_utf8_lossy(&output.stderr).to_string();
+                    if err.is_empty() {
+                        Err(String::from_utf8_lossy(&output.stdout).to_string())
+                    } else {
+                        Err(err)
+                    }
+                }
+            }
+            Err(e) => Err(format!("Failed to execute git commit: {}", e)),
         }
     }
 }

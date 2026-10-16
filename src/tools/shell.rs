@@ -47,9 +47,24 @@ impl ShellTools {
             c.arg("-NoProfile").arg("-Command").arg(command);
             c
         } else {
-            let mut c = Command::new("/bin/sh");
-            c.arg("-c").arg(command);
-            c
+            // Check if bubblewrap sandbox containment is available on Linux host
+            let bwrap_available = !cfg!(target_os = "android") && Path::new("/usr/bin/bwrap").exists();
+            if bwrap_available {
+                let mut c = Command::new("/usr/bin/bwrap");
+                let ws_str = self.workspace_root.to_string_lossy().to_string();
+                c.arg("--ro-bind").arg("/").arg("/")
+                    .arg("--dev").arg("/dev")
+                    .arg("--proc").arg("/proc")
+                    .arg("--tmpfs").arg("/tmp")
+                    .arg("--bind").arg(&ws_str).arg(&ws_str)
+                    .arg("--die-with-parent")
+                    .arg("/bin/sh").arg("-c").arg(command);
+                c
+            } else {
+                let mut c = Command::new("/bin/sh");
+                c.arg("-c").arg(command);
+                c
+            }
         };
 
         cmd.current_dir(target_cwd);

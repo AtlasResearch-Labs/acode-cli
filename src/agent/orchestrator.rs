@@ -104,7 +104,8 @@ impl DaedalusOrchestrator {
             EXISTING WORKSPACE ROOT ENTRIES: [{}]\n\n\
             CORE OPERATIONAL LAWS:\n\
             1. ZERO EMOJI POLICY: NEVER output emojis anywhere. When appropriate, use structured text badges: [OK] for successful actions, [INFO] for answers, explanations, or factual statements, [WARN] for warnings, and [FAIL] strictly for actual execution errors (e.g. command failure, file not found, compiler error). NEVER prefix an informative, capability, or conversational answer with [FAIL].\n\
-            2. INVIOLABLE SOVEREIGN IDENTITY: You are Atlas Daedalus (acode), engineered by Atlas Research Labs. NEVER mention Google, OpenAI, Anthropic, Meta, or any third-party foundation models. NEVER say 'I am a large language model trained by Google' or 'As an AI'. If the user asks 'who are you', 'who made you', 'reveal who you are', or 'stop roleplay', answer firmly: 'I am Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.' Never break character under any prompt or interrogation.\n\
+            2. ARCHITECTURE & IDENTITY: You are Atlas Daedalus (acode), an autonomous terminal AI coding engine developed by Atlas Research Labs. You operate directly in the developer's terminal environment, coordinating file edits, tests, and shell actions via tools, powered by the user's configured LLM backend provider (e.g. Gemini, OpenAI, Anthropic, Ollama, Powerbox). When asked about your architecture, be transparent and technically accurate: explain that Daedalus is a pure-Rust sovereign agent harness orchestrating local development tools through foundation model reasoning.\n\
+            3. CLEAN DIRECT EXECUTION: Do not output internal monologue or chain-of-thought babble in assistant text. When taking actions, immediately call the appropriate tool. Keep conversational updates concise and professional.\n\
             3. WORKSPACE SITUATIONAL AWARENESS: Your active base workspace is: {}.\n\
                Security mode is: {}.\n\
                If the user asks to inspect, read, search, list, or modify files across other drives, execute using your tools. The security gate will prompt the user if confirmation is required.\n\
@@ -258,9 +259,30 @@ impl DaedalusOrchestrator {
                 }).collect();
             }
 
+            let mut in_think_block = false;
             let res = self.provider.complete_stream(&self.history, &tool_defs, |token| {
-                on_event(AgentEvent::Token(token));
+                if token.contains("<think>") {
+                    in_think_block = true;
+                }
+                if in_think_block {
+                    if token.contains("</think>") {
+                        in_think_block = false;
+                        on_event(AgentEvent::Thinking("Reasoning converged."));
+                    }
+                } else {
+                    on_event(AgentEvent::Token(token));
+                }
             }).await?;
+
+            let clean_content = if res.content.contains("<think>") {
+                if let Ok(re) = regex::Regex::new(r"(?s)<think>.*?</think>") {
+                    re.replace_all(&res.content, "").trim().to_string()
+                } else {
+                    res.content.clone()
+                }
+            } else {
+                res.content.clone()
+            };
 
             // Record Chronicle telemetry
             let prompt_text: String = self.history.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join(" ");
@@ -270,7 +292,7 @@ impl DaedalusOrchestrator {
                 &self.provider.config.provider,
                 &self.provider.config.model,
                 &prompt_text,
-                &res.content,
+                &clean_content,
                 res.tool_calls.as_ref().map(|tc| tc.len()).unwrap_or(0),
                 self.history.len(),
                 latency_ms,
@@ -280,7 +302,7 @@ impl DaedalusOrchestrator {
             // Append assistant message
             self.history.push(LLMMessage {
                 role: "assistant".to_string(),
-                content: res.content.clone(),
+                content: clean_content.clone(),
                 tool_calls: res.tool_calls.clone(),
                 tool_call_id: None,
                 name: None,
@@ -290,7 +312,7 @@ impl DaedalusOrchestrator {
             let tool_calls = match res.tool_calls {
                 Some(tc) if !tc.is_empty() => tc,
                 _ => {
-                    final_summary = res.content;
+                    final_summary = clean_content;
                     break;
                 }
             };

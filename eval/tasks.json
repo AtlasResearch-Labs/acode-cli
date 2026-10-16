@@ -34,6 +34,44 @@
     "workspace_setup": {
       "access.log": "192.168.1.1 GET /index.html 200\n10.0.0.2 GET /admin 404\n192.168.1.1 GET /secret 404\n10.0.0.2 GET /config 404\n172.16.0.5 GET /api 200\n10.0.0.2 GET /hidden 404\n"
     },
-    "verification_cmd": "python -c \"content = open('404_summary.txt').read(); assert '10.0.0.2' in content and '192.168.1.1' in content, 'Missing expected 404 IPs'\""
+    "verification_cmd": "python -c \"content = open('404_summary.txt').read().strip(); lines = [l.strip() for l in content.splitlines() if l.strip()]; assert any('10.0.0.2' in l and '3' in l for l in lines) and any('192.168.1.1' in l and '1' in l for l in lines), f'Invalid 404 summary output: {content}'\""
+  },
+  {
+    "id": "SWE-04",
+    "name": "Rust Thread-Safe Counter Mutex",
+    "prompt": "Implement ThreadSafeCounter in src/lib.rs with new(), increment(), and get() methods using Arc and Mutex. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"counter_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "// Implement ThreadSafeCounter here\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn test_concurrent_increment() {\n        let counter = ThreadSafeCounter::new();\n        let mut handles = vec![];\n        for _ in 0..10 {\n            let c = counter.clone();\n            handles.push(thread::spawn(move || {\n                for _ in 0..100 {\n                    c.increment();\n                }\n            }));\n        }\n        for h in handles {\n            h.join().unwrap();\n        }\n        assert_eq!(counter.get(), 1000);\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-05",
+    "name": "Python CSV Column Statistics",
+    "prompt": "Write a Python script in stats.py that reads metrics.csv, calculates the average of the 'latency_ms' column and max of the 'memory_mb' column, and writes the results to summary.json as float values under 'avg_latency' and 'max_memory'. Run stats.py to create summary.json.",
+    "workspace_setup": {
+      "metrics.csv": "timestamp,latency_ms,memory_mb\n1001,45.5,128\n1002,52.0,140\n1003,38.5,135\n1004,64.0,160\n"
+    },
+    "verification_cmd": "python -c \"import json; d = json.load(open('summary.json')); assert abs(d['avg_latency'] - 50.0) < 0.1, 'Bad avg_latency'; assert abs(d['max_memory'] - 160.0) < 0.1, 'Bad max_memory'\""
+  },
+  {
+    "id": "SWE-06",
+    "name": "JavaScript Retry with Exponential Backoff",
+    "prompt": "In retry.js, export a function retryOperation(fn, maxRetries = 3, baseDelayMs = 10) that attempts fn() up to maxRetries times, doubling delay on each failure, and returns the result or throws the final error.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"retry-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { retryOperation } = require('./retry');\n(async () => {\n  let attempts = 0;\n  const res = await retryOperation(async () => {\n    attempts++;\n    if (attempts < 3) throw new Error('transient');\n    return 42;\n  }, 5, 5);\n  if (res !== 42 || attempts !== 3) process.exit(1);\n})();\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "CONFIG-01",
+    "name": "Docker Compose Port and Environment Migration",
+    "prompt": "In docker-compose.yml, change the host port mapping for the 'web' service from 8080:80 to 9090:80, and add the environment variable PORT=9090.",
+    "workspace_setup": {
+      "docker-compose.yml": "version: '3.8'\nservices:\n  web:\n    image: nginx:alpine\n    ports:\n      - \"8080:80\"\n    environment:\n      - NODE_ENV=production\n"
+    },
+    "verification_cmd": "python -c \"content = open('docker-compose.yml').read(); assert '9090:80' in content and 'PORT=9090' in content and '8080:80' not in content, 'Port migration incomplete'\""
   }
 ]

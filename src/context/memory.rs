@@ -70,13 +70,18 @@ impl MemoryEngine {
 
         // Initialize USER.md if missing
         if !self.user_profile_md.exists() {
-            let default_user = "# User Profile & Preferences\n\
-                - User: Victor (Lead AI Architect)\n\
-                - Organization: Atlas Research Labs\n\
-                - Primary Projects: Atlas Daedalus, Orion, AI-Powerbox, Beacon, Chronicle\n\
-                - Preferred Tech Stack: Pure Rust, TypeScript, Tokio, Python, Node.js\n\
-                - Coding Style: Industrial, clean, modular, robust error handling, zero emojis\n\
-                - Communication Tone: Concise, high-density, technical, sovereign\n";
+            let user_name = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "Developer".to_string());
+            let default_user = format!(
+                "# User Profile & Preferences\n\
+                - User: {}\n\
+                - Primary Workspace: {}\n\
+                - Coding Style: Clean, modular, robust error handling, zero emojis\n\
+                - Communication Tone: Concise, high-density, technical\n",
+                user_name,
+                self.workspace_root.display()
+            );
             let _ = fs::write(&self.user_profile_md, default_user);
         }
 
@@ -101,6 +106,28 @@ impl MemoryEngine {
                 Utc::now().format("%Y-%m-%d")
             );
             let _ = fs::write(&self.project_memory_md, default_project);
+        }
+
+        // Auto-ignore .daedalus/ in user repos if in a git workspace
+        let git_dir = self.workspace_root.join(".git");
+        if git_dir.exists() {
+            let gitignore_path = self.workspace_root.join(".gitignore");
+            let mut content = if gitignore_path.exists() {
+                fs::read_to_string(&gitignore_path).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let has_daedalus = content.lines().any(|l| {
+                let trimmed = l.trim();
+                trimmed == ".daedalus" || trimmed == ".daedalus/" || trimmed == "/.daedalus/" || trimmed == "/.daedalus"
+            });
+            if !has_daedalus {
+                if !content.is_empty() && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+                content.push_str("\n# Atlas Daedalus local cache & memory\n.daedalus/\n");
+                let _ = fs::write(&gitignore_path, content);
+            }
         }
     }
 

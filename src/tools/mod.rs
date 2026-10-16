@@ -9,4 +9,5 @@ pub mod deps;
 pub mod container;
 pub mod symbols;
 pub mod sandbox;
+pub mod mcp;
 pub mod registry;

@@ -18,6 +18,7 @@ use crate::tools::spill::SpillGuard;
 
 pub enum AgentEvent<'a> {
     Thinking(&'a str),
+    Token(&'a str),
     ToolStart { name: &'a str, args: &'a serde_json::Value },
     ToolEnd { name: &'a str, success: bool, output: &'a str },
     TestResult { command: &'a str, passed: bool, output: &'a str },
@@ -120,7 +121,7 @@ impl DaedalusOrchestrator {
 
     pub async fn run_plan<F>(&mut self, goal: &str, on_event: F) -> Result<String, String>
     where
-        F: FnMut(AgentEvent),
+        F: FnMut(AgentEvent) + Send,
     {
         let prompt = format!(
             "ARCHITECT PLANNING MODE:\n\
@@ -142,7 +143,7 @@ impl DaedalusOrchestrator {
 
     pub async fn run_task<F>(&mut self, user_goal: &str, mut on_event: F) -> Result<String, String>
     where
-        F: FnMut(AgentEvent),
+        F: FnMut(AgentEvent) + Send,
     {
         let start = Instant::now();
         let mut files_modified = HashSet::new();
@@ -167,6 +168,7 @@ impl DaedalusOrchestrator {
             name: None,
         });
 
+        self.tools.refresh_mcp_tools().await;
         let tool_defs = self.tools.get_definitions();
         let mut turns = 0;
         let max_turns = 25;
@@ -201,7 +203,9 @@ impl DaedalusOrchestrator {
                 }).collect();
             }
 
-            let res = self.provider.complete(&self.history, &tool_defs).await?;
+            let res = self.provider.complete_stream(&self.history, &tool_defs, |token| {
+                on_event(AgentEvent::Token(token));
+            }).await?;
 
             // Record Chronicle telemetry
             let prompt_text: String = self.history.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join(" ");
@@ -414,7 +418,9 @@ impl DaedalusOrchestrator {
                         name: None,
                     });
 
-                    if let Ok(repair_res) = self.provider.complete(&self.history, &tool_defs).await {
+                    if let Ok(repair_res) = self.provider.complete_stream(&self.history, &tool_defs, |token| {
+                        on_event(AgentEvent::Token(token));
+                    }).await {
                         self.history.push(LLMMessage {
                             role: "assistant".to_string(),
                             content: repair_res.content.clone(),

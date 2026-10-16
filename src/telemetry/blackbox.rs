@@ -7,14 +7,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-fn fnv1a_hash(data: &[u8]) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for &byte in data {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{:016x}", hash)
+use crate::telemetry::host::{HostInspector, HostMetrics};
+
+fn sha256_hash(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +29,8 @@ pub struct BlackBoxEvent {
     pub prev_hash: Option<String>,
     #[serde(default)]
     pub chain_hash: Option<String>,
+    #[serde(default)]
+    pub host_metrics: Option<HostMetrics>,
     pub duration_ms: Option<u64>,
     pub status: String,
 }
@@ -46,8 +48,9 @@ impl BlackBoxRecorder {
     }
 
     pub fn get_last_chain_hash(&self) -> String {
+        let genesis = "0".repeat(64);
         if !self.log_file.exists() {
-            return "0000000000000000".to_string();
+            return genesis;
         }
 
         if let Ok(content) = fs::read_to_string(&self.log_file) {
@@ -60,7 +63,7 @@ impl BlackBoxRecorder {
                 }
             }
         }
-        "0000000000000000".to_string()
+        genesis
     }
 
     pub fn record(
@@ -72,9 +75,10 @@ impl BlackBoxRecorder {
         status: &str,
     ) -> BlackBoxEvent {
         let prev_hash = self.get_last_chain_hash();
-        let payload_hash = fnv1a_hash(payload.as_bytes());
-        let chain_material = format!("{}:{}:{}:{}", prev_hash, event_type, source, payload_hash);
-        let chain_hash = fnv1a_hash(chain_material.as_bytes());
+        let payload_hash = sha256_hash(payload.as_bytes());
+        let host_metrics = HostInspector::collect();
+        let chain_material = format!("{}:{}:{}:{}:{}", prev_hash, event_type, source, payload_hash, status);
+        let chain_hash = sha256_hash(chain_material.as_bytes());
 
         let summary = if payload.len() > 200 {
             let mut end = 200;
@@ -95,6 +99,7 @@ impl BlackBoxRecorder {
             payload_hash,
             prev_hash: Some(prev_hash),
             chain_hash: Some(chain_hash),
+            host_metrics: Some(host_metrics),
             duration_ms,
             status: status.to_string(),
         };
@@ -113,8 +118,9 @@ impl BlackBoxRecorder {
             return (true, 0);
         }
 
+        let genesis = "0".repeat(64);
         if let Ok(content) = fs::read_to_string(&self.log_file) {
-            let mut expected_prev = "0000000000000000".to_string();
+            let mut expected_prev = genesis;
             let mut verified_count = 0;
             for line in content.lines() {
                 if let Ok(evt) = serde_json::from_str::<BlackBoxEvent>(line) {
@@ -122,8 +128,8 @@ impl BlackBoxRecorder {
                         if prev != &expected_prev {
                             return (false, verified_count);
                         }
-                        let chain_material = format!("{}:{}:{}:{}", prev, evt.event_type, evt.source, evt.payload_hash);
-                        let computed = fnv1a_hash(chain_material.as_bytes());
+                        let chain_material = format!("{}:{}:{}:{}:{}", prev, evt.event_type, evt.source, evt.payload_hash, evt.status);
+                        let computed = sha256_hash(chain_material.as_bytes());
                         if &computed != chain {
                             return (false, verified_count);
                         }
@@ -180,8 +186,9 @@ mod tests {
         let evt = recorder.record("test_event", "unit_test", "hello world payload", Some(42), "OK");
         assert_eq!(evt.event_type, "test_event");
         assert_eq!(evt.status, "OK");
-        assert!(!evt.payload_hash.is_empty());
+        assert_eq!(evt.payload_hash.len(), 64);
         assert!(evt.chain_hash.is_some());
+        assert!(evt.host_metrics.is_some());
 
         let recents = recorder.read_recent_events(5);
         assert!(!recents.is_empty());

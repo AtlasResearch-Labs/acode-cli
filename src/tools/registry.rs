@@ -14,6 +14,7 @@ use crate::tools::deps::DependencyManager;
 use crate::tools::container::ContainerManager;
 use crate::tools::symbols::SymbolEngine;
 use crate::tools::sandbox::ShadowSandbox;
+use crate::tools::mcp::McpManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -33,6 +34,7 @@ pub struct ToolRegistry {
     pub containers: ContainerManager,
     pub symbols: SymbolEngine,
     pub sandbox: ShadowSandbox,
+    pub mcp: McpManager,
     pub workspace_root: std::path::PathBuf,
 }
 
@@ -50,12 +52,17 @@ impl ToolRegistry {
             containers: ContainerManager::new(),
             symbols: SymbolEngine::new(&p),
             sandbox: ShadowSandbox::new(&p),
+            mcp: McpManager::new(&p),
             workspace_root: p,
         }
     }
 
+    pub async fn refresh_mcp_tools(&mut self) {
+        self.mcp.refresh_tools().await;
+    }
+
     pub fn get_definitions(&self) -> Vec<ToolDefinition> {
-        vec![
+        let mut defs = vec![
             ToolDefinition {
                 name: "view_file".to_string(),
                 description: "View the contents of a file with line numbers. Supports slice ranges.".to_string(),
@@ -386,10 +393,17 @@ impl ToolRegistry {
                     "required": ["action"]
                 }),
             },
-        ]
+        ];
+
+        defs.extend(self.mcp.get_definitions());
+        defs
     }
 
     pub async fn execute_tool(&self, name: &str, args: &Value) -> (bool, String) {
+        if name.starts_with("mcp__") {
+            return self.mcp.call_tool(name, args).await;
+        }
+
         match name {
             "view_file" => {
                 let path = args.get("path")

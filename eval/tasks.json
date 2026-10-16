@@ -1,0 +1,39 @@
+[
+  {
+    "id": "SWE-01",
+    "name": "Rust String Slice Boundary Bug",
+    "prompt": "Fix the panic in src/lib.rs where truncating a UTF-8 string at an arbitrary byte index causes a slice boundary panic. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"slice_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub fn truncate_safe(s: &str, max_bytes: usize) -> &str {\n    &s[..max_bytes]\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_truncate_multibyte() {\n        let s = \"Hello, 世界!\";\n        let res = truncate_safe(s, 8);\n        assert!(res.len() <= 8);\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-02",
+    "name": "Python JSON Key Renamer",
+    "prompt": "Create a script in app.py that reads data.json, renames the key 'user_id' to 'account_id', and writes the result to output.json.",
+    "workspace_setup": {
+      "data.json": "{\"user_id\": 42, \"name\": \"Daedalus\"}\n"
+    },
+    "verification_cmd": "python -c \"import json; d = json.load(open('output.json')); assert d.get('account_id') == 42 and 'user_id' not in d, 'Key rename failed'\""
+  },
+  {
+    "id": "SWE-03",
+    "name": "Node Package Version Bump",
+    "prompt": "Update the version in package.json from 1.0.0 to 1.1.0 and add a description field 'Industrial Autonomous AI Agent'.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"atlas-test\",\n  \"version\": \"1.0.0\"\n}\n"
+    },
+    "verification_cmd": "node -e \"const p = require('./package.json'); if (p.version !== '1.1.0' || !p.description) process.exit(1);\""
+  },
+  {
+    "id": "TERM-01",
+    "name": "Log Aggregator Shell Command",
+    "prompt": "Filter access.log to extract all IP addresses with 404 status codes, sort them, count unique occurrences, and save the result to 404_summary.txt.",
+    "workspace_setup": {
+      "access.log": "192.168.1.1 GET /index.html 200\n10.0.0.2 GET /admin 404\n192.168.1.1 GET /secret 404\n10.0.0.2 GET /config 404\n172.16.0.5 GET /api 200\n10.0.0.2 GET /hidden 404\n"
+    },
+    "verification_cmd": "python -c \"content = open('404_summary.txt').read(); assert '10.0.0.2' in content and '192.168.1.1' in content, 'Missing expected 404 IPs'\""
+  }
+]

@@ -14,6 +14,7 @@ mod cli;
 
 use clap::Parser;
 use std::env;
+use std::io::Write;
 
 use crate::agent::orchestrator::{AgentEvent, DaedalusOrchestrator};
 use crate::cli::commands::SlashCommandHandler;
@@ -94,25 +95,57 @@ async fn main() {
 
         println!("{}[TASK]{} {}\n", TuiRenderer::BOLD, TuiRenderer::RESET, full_prompt);
 
+        let mut streamed_any = false;
         let res = orchestrator.run_task(&full_prompt, |event| match event {
-            AgentEvent::Thinking(s) => TuiRenderer::print_thinking(s),
-            AgentEvent::ToolStart { name, args } => TuiRenderer::print_tool_start(name, args),
+            AgentEvent::Thinking(s) => {
+                if streamed_any {
+                    println!();
+                    streamed_any = false;
+                }
+                TuiRenderer::print_thinking(s);
+            }
+            AgentEvent::Token(s) => {
+                print!("{}", s);
+                let _ = std::io::stdout().flush();
+                streamed_any = true;
+            }
+            AgentEvent::ToolStart { name, args } => {
+                if streamed_any {
+                    println!();
+                    streamed_any = false;
+                }
+                TuiRenderer::print_tool_start(name, args);
+            }
             AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
             AgentEvent::TestResult { command, passed, output } => TuiRenderer::print_test_result(command, passed, output),
             AgentEvent::Done { files_modified, tools_called, .. } => {
+                if streamed_any {
+                    println!();
+                    streamed_any = false;
+                }
                 if !files_modified.is_empty() {
                     TuiRenderer::print_success(&format!("Modified: {}", files_modified.join(", ")));
                 } else if tools_called > 0 {
                     TuiRenderer::print_success("Task executed successfully.");
                 }
             }
-            AgentEvent::Error(err) => TuiRenderer::print_error(err),
+            AgentEvent::Error(err) => {
+                if streamed_any {
+                    println!();
+                    streamed_any = false;
+                }
+                TuiRenderer::print_error(err);
+            }
         }).await;
 
         match res {
             Ok(summary) => {
                 if !summary.is_empty() {
-                    println!("{}\n", summary);
+                    if !streamed_any {
+                        println!("{}\n", summary);
+                    } else {
+                        println!();
+                    }
                 }
             }
             Err(e) => {

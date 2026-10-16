@@ -69,8 +69,8 @@ impl PermissionGate {
             return PermissionDecision::Allow;
         }
 
-        // Terminal execution tools: run_command, run_tests, start_daemon
-        if tool_name == "run_command" || tool_name == "run_tests" || tool_name == "start_daemon" {
+        // Terminal execution tools: run_command, run_tests, start_daemon, or MCP command tools
+        if tool_name == "run_command" || tool_name == "run_tests" || tool_name == "start_daemon" || (tool_name.starts_with("mcp__") && (args.get("command").is_some() || args.get("cmd").is_some())) {
             let cmd = match tool_name {
                 "run_tests" => {
                     args.get("command")
@@ -80,6 +80,7 @@ impl PermissionGate {
                 }
                 _ => {
                     args.get("command")
+                        .or_else(|| args.get("cmd"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim()
@@ -209,6 +210,13 @@ impl PermissionGate {
                     .or_else(|| args.get("dir"))
                     .and_then(|v| v.as_str())
             }
+            _ if tool_name.starts_with("mcp__") => {
+                args.get("path")
+                    .or_else(|| args.get("file"))
+                    .or_else(|| args.get("file_path"))
+                    .or_else(|| args.get("dir"))
+                    .and_then(|v| v.as_str())
+            }
             _ => None,
         };
 
@@ -274,6 +282,15 @@ impl PermissionGate {
                 details: format!("Path: {}", normalized.display()),
                 risk_level: RiskLevel::Medium,
                 suggest_trust_path: suggest_folder,
+            };
+        }
+
+        if tool_name.starts_with("mcp__") && self.config.mode == SecurityMode::Strict {
+            return PermissionDecision::Prompt {
+                reason: format!("Strict mode requires human approval for external MCP tool '{}'", tool_name),
+                details: format!("Arguments: {}", args),
+                risk_level: RiskLevel::Medium,
+                suggest_trust_path: None,
             };
         }
 
@@ -439,6 +456,36 @@ mod tests {
                 assert!(risk_level == RiskLevel::Medium || risk_level == RiskLevel::High);
             }
             other => panic!("Expected Prompt for path traversal, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_gate_mcp_command_risk() {
+        let gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+        let workspace = PathBuf::from("/workspace");
+        let args = json!({ "command": "cargo check && rm -rf /" });
+
+        let decision = gate.evaluate("mcp__terminal__exec", &args, &workspace);
+        match decision {
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Critical);
+            }
+            other => panic!("Expected Critical prompt for MCP command, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_gate_mcp_strict_mode() {
+        let gate = PermissionGate::new(Some(SecurityMode::Strict));
+        let workspace = PathBuf::from("/workspace");
+        let args = json!({ "query": "SELECT * FROM users" });
+
+        let decision = gate.evaluate("mcp__sqlite__query", &args, &workspace);
+        match decision {
+            PermissionDecision::Prompt { reason, .. } => {
+                assert!(reason.contains("Strict mode requires human approval"));
+            }
+            other => panic!("Expected Strict prompt for MCP tool, got: {:?}", other),
         }
     }
 }

@@ -77,6 +77,77 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/web" => {
+                if arg.is_empty() {
+                    println!("{}Usage: /web <query>{}\n  Example: /web rust reqwest timeout\n", TuiRenderer::RED, TuiRenderer::RESET);
+                    return true;
+                }
+                println!("{}[ACODE] Searching web across DuckDuckGo and HackerNews...{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                match orchestrator.tools.web.web_search(arg, 5).await {
+                    Ok(res) => println!("{}\n", res),
+                    Err(e) => println!("{}[FAIL] Web search error: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                }
+                true
+            }
+            "/fetch" | "/read" => {
+                if arg.is_empty() {
+                    println!("{}Usage: /fetch <url>{}\n  Example: /fetch https://arxiv.org/abs/2312.11805\n", TuiRenderer::RED, TuiRenderer::RESET);
+                    return true;
+                }
+                println!("{}[ACODE] Fetching and parsing web content...{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                match orchestrator.tools.web.web_fetch(arg, 8000).await {
+                    Ok(content) => println!("{}\n", content),
+                    Err(e) => println!("{}[FAIL] Fetch error: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                }
+                true
+            }
+            "/test" => {
+                println!("{}[ACODE] Running test suite...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                let res = if arg.is_empty() {
+                    orchestrator.verifier.run_verification().await
+                } else {
+                    orchestrator.verifier.run_custom_test(arg, None).await
+                };
+
+                let cmd_name = res.command.as_deref().unwrap_or("no test framework detected");
+                println!("\n{}[TEST EXECUTION]{} Command: {}{}{} ({}ms)", TuiRenderer::BOLD, TuiRenderer::RESET, TuiRenderer::CYAN, cmd_name, TuiRenderer::RESET, res.duration_ms);
+                if res.passed {
+                    println!("{}[OK] All tests passed successfully.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                } else {
+                    println!("{}[FAIL] Tests failed.\n{}\n", TuiRenderer::RED, res.output);
+                }
+                true
+            }
+            "/repos" => {
+                if let Some(parent) = orchestrator.workspace_root.parent() {
+                    if let Ok(entries) = std::fs::read_dir(parent) {
+                        let mut repos = Vec::new();
+                        for entry in entries.flatten() {
+                            if let Ok(ft) = entry.file_type() {
+                                if ft.is_dir() {
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    if !name.starts_with('.') {
+                                        let is_git = entry.path().join(".git").exists();
+                                        repos.push((name, is_git));
+                                    }
+                                }
+                            }
+                        }
+                        repos.sort();
+                        println!("\n{}[SIBLING WORKSPACES]{} in {}", TuiRenderer::BOLD, TuiRenderer::RESET, parent.display());
+                        for (r, is_git) in &repos {
+                            let git_badge = if *is_git { format!("{}[git]{}", TuiRenderer::GREEN, TuiRenderer::RESET) } else { String::new() };
+                            println!("  - {}{}{} {}", TuiRenderer::CYAN, r, TuiRenderer::RESET, git_badge);
+                        }
+                        println!("\nSwitch active workspace using: /cd <folder_name>\n");
+                    } else {
+                        println!("{}[FAIL] Cannot read parent folder: {}{}\n", TuiRenderer::RED, parent.display(), TuiRenderer::RESET);
+                    }
+                } else {
+                    println!("{}Active workspace has no parent folder.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                }
+                true
+            }
             "/cost" => {
                 let traces = orchestrator.chronicle.get_recent_traces(10);
                 if traces.is_empty() {
@@ -495,7 +566,10 @@ impl SlashCommandHandler {
         println!("  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/info{}            - Display active workspace root, git branch, and context", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/cd <path|@alias>{} - Switch active workspace root directory", TuiRenderer::CYAN, TuiRenderer::RESET);
-        println!("  {}/bookmark{}        - Manage saved workspace aliases (/bookmark add/remove)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/web <query>{}     - Direct terminal web search (DuckDuckGo + HackerNews)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/fetch <url>{}     - Extract readable Markdown from any URL, paper, or transcript", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/test [cmd]{}      - Execute project test suite or custom test command", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/repos{}           - Discover sibling workspaces in parent directory", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/history{}         - Display recent command history", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/undo{}            - Revert all uncommitted working tree changes", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/diff{}            - Inspect working tree git diff", TuiRenderer::CYAN, TuiRenderer::RESET);

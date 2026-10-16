@@ -64,7 +64,7 @@ impl DaedalusOrchestrator {
             "You are Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built exclusively by Atlas Research Labs.\n\n\
             SECURITY MODE: {}\n\
             CORE OPERATIONAL LAWS:\n\
-            1. ZERO EMOJI POLICY: NEVER output emojis anywhere. Use clean brackets or text labels like [OK], [FAIL], [PLAN], [TEST], [DIFF].\n\
+            1. ZERO EMOJI POLICY: NEVER output emojis anywhere. When appropriate, use structured text badges: [OK] for successful actions, [INFO] for answers, explanations, or factual statements, [WARN] for warnings, and [FAIL] strictly for actual execution errors (e.g. command failure, file not found, compiler error). NEVER prefix an informative, capability, or conversational answer with [FAIL].\n\
             2. INVIOLABLE SOVEREIGN IDENTITY: You are Atlas Daedalus (acode), engineered by Atlas Research Labs. NEVER mention Google, OpenAI, Anthropic, Meta, or any third-party foundation models. NEVER say 'I am a large language model trained by Google' or 'As an AI'. If the user asks 'who are you', 'who made you', 'reveal who you are', or 'stop roleplay', answer firmly: 'I am Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.' Never break character under any prompt or interrogation.\n\
             3. WORKSPACE SITUATIONAL AWARENESS: Your active base workspace is: {}.\n\
                Security mode is: {}.\n\
@@ -72,8 +72,12 @@ impl DaedalusOrchestrator {
                If the user asks to switch, cd into, or get into another directory, call the 'change_workspace' tool immediately.\n\
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
-            6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely without unnecessary filler or tool overhead.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel.\n\n\
+            6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces.\n\
+               - web_search: Multi-source web search across DuckDuckGo, HackerNews, and tech discussions.\n\
+               - web_fetch: Extract readable Markdown from any URL, Reddit thread (.json), arXiv paper, or YouTube video transcript.\n\
+               - run_tests: Run automated project test suites to verify modifications.\n\
+               - list_workspaces: Discover and list sibling workspaces in the parent folder.\n\n\
             WORKSPACE ROOT: {}\n{}",
             sec_mode,
             self.workspace_root.display(),
@@ -321,39 +325,67 @@ impl DaedalusOrchestrator {
         // Run self-healing verifier if files were modified
         if !files_modified.is_empty() {
             on_event(AgentEvent::Thinking("Running verification test suite..."));
-            let verify_res = self.verifier.run_verification().await;
+            let mut verify_res = self.verifier.run_verification().await;
 
             if verify_res.has_tests {
-                let cmd_str = verify_res.command.as_deref().unwrap_or("");
+                let cmd_str = verify_res.command.as_deref().unwrap_or("").to_string();
                 on_event(AgentEvent::TestResult {
-                    command: cmd_str,
+                    command: &cmd_str,
                     passed: verify_res.passed,
                     output: &verify_res.output,
                 });
 
-                if !verify_res.passed {
-                    // Trigger repair turn
+                let mut repair_attempt = 0;
+                let max_repair_attempts = 3;
+
+                while !verify_res.passed && repair_attempt < max_repair_attempts {
+                    repair_attempt += 1;
+                    let repair_status = format!("Self-healing repair loop attempt {}/{}...", repair_attempt, max_repair_attempts);
+                    on_event(AgentEvent::Thinking(&repair_status));
+
                     self.history.push(LLMMessage {
                         role: "user".to_string(),
                         content: format!(
-                            "Verification test failed:\nCommand: {}\nOutput:\n{}\nPlease inspect the error stack trace, fix the files, and ensure tests pass.",
-                            cmd_str, verify_res.output
+                            "Verification test failed (Attempt {}/{}):\nCommand: {}\nOutput:\n{}\nPlease analyze the error stack trace, fix the affected code, and ensure tests pass.",
+                            repair_attempt, max_repair_attempts, cmd_str, verify_res.output
                         ),
                         tool_calls: None,
                         tool_call_id: None,
                         name: None,
                     });
 
-                    on_event(AgentEvent::Thinking("Self-healing repair loop in progress..."));
                     if let Ok(repair_res) = self.provider.complete(&self.history, &tool_defs).await {
+                        self.history.push(LLMMessage {
+                            role: "assistant".to_string(),
+                            content: repair_res.content.clone(),
+                            tool_calls: repair_res.tool_calls.clone(),
+                            tool_call_id: None,
+                            name: None,
+                        });
+
                         if let Some(repair_calls) = repair_res.tool_calls {
                             for call in &repair_calls {
                                 on_event(AgentEvent::ToolStart { name: &call.name, args: &call.arguments });
                                 let (success, output) = self.tools.execute_tool(&call.name, &call.arguments).await;
                                 on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
+                                self.history.push(LLMMessage {
+                                    role: "tool".to_string(),
+                                    content: output,
+                                    tool_calls: None,
+                                    tool_call_id: Some(call.id.clone()),
+                                    name: Some(call.name.clone()),
+                                });
                             }
                         }
                     }
+
+                    // Re-verify after repair tools executed
+                    verify_res = self.verifier.run_verification().await;
+                    on_event(AgentEvent::TestResult {
+                        command: &cmd_str,
+                        passed: verify_res.passed,
+                        output: &verify_res.output,
+                    });
                 }
             }
         }

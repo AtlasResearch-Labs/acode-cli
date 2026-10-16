@@ -8,6 +8,7 @@ use crate::tools::fs::FsTools;
 use crate::tools::shell::ShellTools;
 use crate::tools::git::GitTools;
 use crate::tools::pillars::PillarTools;
+use crate::tools::web::WebTools;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -21,15 +22,20 @@ pub struct ToolRegistry {
     pub shell: ShellTools,
     pub git: GitTools,
     pub pillars: PillarTools,
+    pub web: WebTools,
+    pub workspace_root: std::path::PathBuf,
 }
 
 impl ToolRegistry {
     pub fn new<P: AsRef<Path>>(workspace_root: P) -> Self {
+        let p = workspace_root.as_ref().to_path_buf();
         Self {
-            fs: FsTools::new(&workspace_root),
-            shell: ShellTools::new(&workspace_root),
-            git: GitTools::new(&workspace_root),
-            pillars: PillarTools::new(&workspace_root),
+            fs: FsTools::new(&p),
+            shell: ShellTools::new(&p),
+            git: GitTools::new(&p),
+            pillars: PillarTools::new(&p),
+            web: WebTools::new(),
+            workspace_root: p,
         }
     }
 
@@ -161,6 +167,51 @@ impl ToolRegistry {
                         "subdomain": { "type": "string", "description": "Custom subdomain" }
                     },
                     "required": ["port"]
+                }),
+            },
+            ToolDefinition {
+                name: "web_search".to_string(),
+                description: "Multi-source web search across DuckDuckGo, HackerNews, and technical documentation.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query or keyword" },
+                        "max_results": { "type": "integer", "description": "Maximum results to return (1-10)" }
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "web_fetch".to_string(),
+                description: "Extract readable Markdown from any web page, Reddit post/thread, arXiv paper, YouTube video transcript, or documentation.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "url": { "type": "string", "description": "Full HTTP/HTTPS URL" },
+                        "max_chars": { "type": "integer", "description": "Max characters to extract (default: 8000)" }
+                    },
+                    "required": ["url"]
+                }),
+            },
+            ToolDefinition {
+                name: "run_tests".to_string(),
+                description: "Run automated test suite (cargo test, npm test, pytest, go test, make test, etc.) or custom test command.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "Optional specific test command to execute" },
+                        "cwd": { "type": "string", "description": "Optional directory to run tests in" }
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "list_workspaces".to_string(),
+                description: "List sibling projects and workspace directories in parent folder.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
                 }),
             },
         ]
@@ -298,6 +349,66 @@ impl ToolRegistry {
                 let subdomain = args.get("subdomain").and_then(|v| v.as_str());
                 let (success, url, inspector) = self.pillars.start_beacon_tunnel(port, subdomain).await;
                 (success, format!("Live URL: {}\nInspector: {}", url, inspector))
+            }
+            "web_search" => {
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let max_results = args.get("max_results").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(5);
+                match self.web.web_search(query, max_results).await {
+                    Ok(res) => (true, res),
+                    Err(e) => (false, e),
+                }
+            }
+            "web_fetch" => {
+                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(8000);
+                match self.web.web_fetch(url, max_chars).await {
+                    Ok(res) => (true, res),
+                    Err(e) => (false, e),
+                }
+            }
+            "run_tests" => {
+                let cmd = args.get("command").and_then(|v| v.as_str());
+                let cwd = args.get("cwd").and_then(|v| v.as_str());
+                let test_cmd = match cmd {
+                    Some(c) => c.to_string(),
+                    None => {
+                        crate::agent::tester::SelfHealingVerifier::new(&self.workspace_root)
+                            .detect_test_command()
+                            .unwrap_or_else(|| "cargo test".to_string())
+                    }
+                };
+                let res = self.shell.run_command(&test_cmd, cwd).await;
+                let mut out = format!("Test Command: {}\nExit code: {}\nPassed: {}\n\n", test_cmd, res.exit_code, res.success);
+                if !res.stdout.is_empty() { out.push_str(&format!("STDOUT:\n{}\n", res.stdout)); }
+                if !res.stderr.is_empty() { out.push_str(&format!("STDERR:\n{}\n", res.stderr)); }
+                (res.success, out)
+            }
+            "list_workspaces" => {
+                if let Some(parent) = self.workspace_root.parent() {
+                    if let Ok(entries) = std::fs::read_dir(parent) {
+                        let mut dirs = Vec::new();
+                        for entry in entries.flatten() {
+                            if let Ok(ft) = entry.file_type() {
+                                if ft.is_dir() {
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    if !name.starts_with('.') {
+                                        dirs.push(name);
+                                    }
+                                }
+                            }
+                        }
+                        dirs.sort();
+                        if dirs.is_empty() {
+                            (true, "No sibling directories found in parent.".to_string())
+                        } else {
+                            (true, format!("Parent Directory: {}\nWorkspaces:\n{}", parent.display(), dirs.iter().map(|d| format!("- {}", d)).collect::<Vec<_>>().join("\n")))
+                        }
+                    } else {
+                        (false, format!("Cannot read parent directory of {}", self.workspace_root.display()))
+                    }
+                } else {
+                    (false, "Active workspace has no parent directory.".to_string())
+                }
             }
             _ => (false, format!("Unknown tool: {}", name)),
         }

@@ -25,6 +25,28 @@ impl ProviderRouter {
         Self { config, client }
     }
 
+    async fn post_with_retry(&self, builder: reqwest::RequestBuilder, provider_name: &str) -> Result<reqwest::Response, String> {
+        let mut attempts = 0;
+        let max_attempts = 3;
+        loop {
+            attempts += 1;
+            let req = match builder.try_clone() {
+                Some(r) => r,
+                None => return Err(format!("{} request cannot be cloned for retry", provider_name)),
+            };
+
+            match req.send().await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    if attempts >= max_attempts {
+                        return Err(format!("{} network error (after {} attempts): {}", provider_name, attempts, e));
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500 * attempts as u64)).await;
+                }
+            }
+        }
+    }
+
     fn resolve_config(override_model: Option<String>, override_provider: Option<String>) -> ProviderConfig {
         let requested_provider = override_provider
             .or_else(|| env::var("ACODE_PROVIDER").ok())
@@ -216,11 +238,8 @@ impl ProviderRouter {
             body["tools"] = json!([{ "functionDeclarations": func_decls }]);
         }
 
-        let mut resp = self.client.post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Gemini network error: {}", e))?;
+        let req = self.client.post(&url).json(&body);
+        let mut resp = self.post_with_retry(req, "GEMINI").await?;
 
         if resp.status().as_u16() == 429 && self.config.model != "gemini-2.0-flash" {
             let fallback_url = format!(
@@ -349,13 +368,11 @@ impl ProviderRouter {
             body["tools"] = json!(anthropic_tools);
         }
 
-        let resp = self.client.post(url)
+        let req = self.client.post(url)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Anthropic network error: {}", e))?;
+            .json(&body);
+        let resp = self.post_with_retry(req, "ANTHROPIC").await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -472,12 +489,10 @@ impl ProviderRouter {
             body["tools"] = json!(openai_tools);
         }
 
-        let resp = self.client.post(&url)
+        let req = self.client.post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("{} network error: {}", self.config.provider.to_uppercase(), e))?;
+            .json(&body);
+        let resp = self.post_with_retry(req, &self.config.provider.to_uppercase()).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();

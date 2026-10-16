@@ -24,7 +24,7 @@ use crate::cli::tui::TuiRenderer;
 #[command(
     name = "acode",
     author = "Eren Yeager <victor@atlasresearchlabs.online>",
-    version = "1.0.11-industrial",
+    version = env!("CARGO_PKG_VERSION"),
     about = "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Atlas Research Labs)"
 )]
 struct CliArgs {

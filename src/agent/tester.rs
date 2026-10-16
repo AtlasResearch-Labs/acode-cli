@@ -112,27 +112,45 @@ impl SelfHealingVerifier {
                 }
             }
             "ts" | "tsx" | "js" | "jsx" if self.workspace_root.join("package.json").exists() => {
-                let runner = if self.workspace_root.join("pnpm-lock.yaml").exists() {
-                    "pnpm"
-                } else if self.workspace_root.join("bun.lockb").exists() || self.workspace_root.join("bun.lock").exists() {
-                    "bun"
-                } else if self.workspace_root.join("yarn.lock").exists() {
-                    "yarn"
-                } else {
-                    "npm"
-                };
+                let pkg_has_test = fs::read_to_string(self.workspace_root.join("package.json"))
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|j| j.get("scripts")?.get("test").cloned())
+                    .is_some();
+                if pkg_has_test {
+                    let runner = if self.workspace_root.join("pnpm-lock.yaml").exists() {
+                        "pnpm"
+                    } else if self.workspace_root.join("bun.lockb").exists() || self.workspace_root.join("bun.lock").exists() {
+                        "bun"
+                    } else if self.workspace_root.join("yarn.lock").exists() {
+                        "yarn"
+                    } else {
+                        "npm"
+                    };
 
-                if !stem.is_empty() {
-                    Some(format!("{} test -- {}", runner, stem))
+                    if !stem.is_empty() {
+                        Some(format!("{} test -- {}", runner, stem))
+                    } else {
+                        Some(format!("{} test", runner))
+                    }
                 } else {
-                    Some(format!("{} test", runner))
+                    None
                 }
             }
             "py" => {
-                if !stem.is_empty() {
-                    Some(format!("pytest -k {}", stem))
+                if self.workspace_root.join("pytest.ini").exists() 
+                    || self.workspace_root.join("pyproject.toml").exists()
+                    || self.workspace_root.join("tests").exists()
+                    || self.workspace_root.join("test").exists() {
+                    if !stem.is_empty() {
+                        Some(format!("pytest -k {}", stem))
+                    } else {
+                        Some("pytest".to_string())
+                    }
+                } else if self.workspace_root.join(format!("test_{}.py", stem)).exists() {
+                    Some(format!("pytest test_{}.py", stem))
                 } else {
-                    Some("pytest".to_string())
+                    None
                 }
             }
             "go" if self.workspace_root.join("go.mod").exists() => {

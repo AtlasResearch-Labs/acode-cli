@@ -27,7 +27,7 @@ impl ProviderRouter {
 
     async fn post_with_retry(&self, builder: reqwest::RequestBuilder, provider_name: &str) -> Result<reqwest::Response, String> {
         let mut attempts = 0;
-        let max_attempts = 3;
+        let max_attempts = 5;
         loop {
             attempts += 1;
             let req = match builder.try_clone() {
@@ -36,12 +36,20 @@ impl ProviderRouter {
             };
 
             match req.send().await {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => {
+                    let status = resp.status();
+                    if (status.as_u16() == 429 || status.as_u16() == 502 || status.as_u16() == 503 || status.as_u16() == 504) && attempts < max_attempts {
+                        let delay = std::time::Duration::from_millis(1500 * attempts as u64);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Ok(resp);
+                }
                 Err(e) => {
                     if attempts >= max_attempts {
                         return Err(format!("{} network error (after {} attempts): {}", provider_name, attempts, e));
                     }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500 * attempts as u64)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1000 * attempts as u64)).await;
                 }
             }
         }
@@ -180,6 +188,15 @@ impl ProviderRouter {
         let res = match self.config.provider.as_str() {
             "gemini" => self.complete_stream_gemini(messages, tools, &mut on_token).await,
             "anthropic" => self.complete_stream_anthropic(messages, tools, &mut on_token).await,
+            "powerbox" if !tools.is_empty() => {
+                let r = self.complete_openai_compatible(messages, tools).await;
+                if let Ok(ref resp) = r {
+                    if !resp.content.is_empty() {
+                        on_token(&resp.content);
+                    }
+                }
+                r
+            }
             "openai" | "powerbox" | "ollama" => self.complete_stream_openai_compatible(messages, tools, &mut on_token).await,
             _ => self.complete_stream_gemini(messages, tools, &mut on_token).await,
         };
@@ -507,7 +524,8 @@ impl ProviderRouter {
 
         let mut body = json!({
             "model": self.config.model,
-            "messages": formatted_msgs
+            "messages": formatted_msgs,
+            "temperature": self.config.temperature
         });
 
         if !openai_tools.is_empty() {

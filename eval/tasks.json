@@ -12,7 +12,7 @@
   {
     "id": "SWE-02",
     "name": "Python JSON Key Renamer",
-    "prompt": "Create a script in app.py that reads data.json, renames the key 'user_id' to 'account_id', and writes the result to output.json.",
+    "prompt": "Create a script in app.py that reads data.json, renames the key 'user_id' to 'account_id', and writes the result to output.json. Run app.py to generate output.json.",
     "workspace_setup": {
       "data.json": "{\"user_id\": 42, \"name\": \"Daedalus\"}\n"
     },

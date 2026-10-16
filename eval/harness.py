@@ -98,7 +98,8 @@ def run_task(task, acode_bin, timeout_secs=180):
             "passed": passed,
             "duration_ms": duration_ms,
             "acode_exit_code": proc.returncode,
-            "verification_output": verify_output.strip()
+            "verification_output": verify_output.strip(),
+            "acode_stdout": proc.stdout.strip()
         }
 
     except subprocess.TimeoutExpired:
@@ -161,6 +162,11 @@ def main():
                 print(f"    Error: {res['error']}")
             elif res.get("verification_output"):
                 print(f"    Output: {res['verification_output'][:200]}")
+            if "acode_stdout" in res and not res["passed"]:
+                print(f"    Agent Output:\n{res['acode_stdout']}")
+
+        if idx < len(tasks):
+            time.sleep(2)
 
     pass_rate = (passed_count / len(tasks)) * 100.0 if tasks else 0.0
 

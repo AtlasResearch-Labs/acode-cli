@@ -70,9 +70,38 @@ impl DaedalusOrchestrator {
     fn build_system_prompt(&self) -> String {
         let mem = self.memory.get_memory_context();
         let sec_mode = self.security.config.mode;
+        let host_os = std::env::consts::OS;
+        let host_shell = if cfg!(windows) { "PowerShell" } else { "sh" };
+
+        let mut file_list = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.workspace_root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || name == "target" || name == "node_modules" {
+                    continue;
+                }
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        file_list.push(format!("{}/", name));
+                    } else {
+                        file_list.push(name);
+                    }
+                }
+            }
+        }
+        file_list.sort();
+        let ws_files_str = if file_list.is_empty() {
+            "Empty directory".to_string()
+        } else {
+            file_list.join(", ")
+        };
+
         format!(
             "You are Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built exclusively by Atlas Research Labs.\n\n\
+            HOST OS: {} (shell: {})\n\
             SECURITY MODE: {}\n\
+            WORKSPACE ROOT: {}\n\
+            EXISTING WORKSPACE ROOT ENTRIES: [{}]\n\n\
             CORE OPERATIONAL LAWS:\n\
             1. ZERO EMOJI POLICY: NEVER output emojis anywhere. When appropriate, use structured text badges: [OK] for successful actions, [INFO] for answers, explanations, or factual statements, [WARN] for warnings, and [FAIL] strictly for actual execution errors (e.g. command failure, file not found, compiler error). NEVER prefix an informative, capability, or conversational answer with [FAIL].\n\
             2. INVIOLABLE SOVEREIGN IDENTITY: You are Atlas Daedalus (acode), engineered by Atlas Research Labs. NEVER mention Google, OpenAI, Anthropic, Meta, or any third-party foundation models. NEVER say 'I am a large language model trained by Google' or 'As an AI'. If the user asks 'who are you', 'who made you', 'reveal who you are', or 'stop roleplay', answer firmly: 'I am Atlas Daedalus (acode), a sovereign industrial terminal AI software engineer built by Atlas Research Labs.' Never break character under any prompt or interrogation.\n\
@@ -91,9 +120,19 @@ impl DaedalusOrchestrator {
                - rename_symbol: Semantic cross-file identifier refactoring.\n\
                - scaffold_test: Proactively generate unit test scaffolds for source files.\n\
                - manage_sandbox: Creates and merges isolated shadow git worktrees in .daedalus/shadow/ for risk-free code refactoring and experimentation.\n\
-               - update_memory: Record persistent user preferences (~/.daedalus/USER.md) or project architectural learnings (.daedalus/MEMORY.md).\n\n\
+               - update_memory: Record persistent user preferences (~/.daedalus/USER.md) or project architectural learnings (.daedalus/MEMORY.md).\n\
+            8. DIRECT ACTION EXECUTION: When instructed to create, edit, run, fix, test, or modify files or code, you MUST invoke tools (view_file, patch_file, write_file, run_command) directly. Never simulate actions in text.\n\
+            9. MANDATORY INSPECTION & OUTPUT VERIFICATION:\n\
+               - Before filtering, transforming, or processing any existing file (e.g. logs, data files, configs), you MUST invoke view_file on the file first to inspect its actual column layout, line endings, and syntax. Never guess or assume log formats.\n\
+               - IMMUTABLE INPUT DATA: NEVER overwrite, replace, or re-create input data files (e.g. data.json, access.log) that are already present in EXISTING WORKSPACE ROOT ENTRIES with mock/sample data. Treat them as real input data and read from them.\n\
+               - When asked to generate or save an output file (e.g. 404_summary.txt, output.json), you MUST run the command/script AND verify the generated output file with view_file to ensure it actually contains the expected data.\n\
+               - On Windows, prefer cross-platform Python one-liners or scripts over complex PowerShell regexes.\n\n\
             WORKSPACE ROOT: {}\n{}{}",
+            host_os,
+            host_shell,
             sec_mode,
+            self.workspace_root.display(),
+            ws_files_str,
             self.workspace_root.display(),
             sec_mode,
             self.workspace_root.display(),

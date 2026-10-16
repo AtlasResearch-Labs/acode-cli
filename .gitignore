@@ -3,6 +3,7 @@
 dist/
 node_modules/
 npm/bin/native/
+npm/bin/acode-*
 *.tgz
 *.zip
 **/*.rs.bk

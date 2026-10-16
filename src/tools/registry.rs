@@ -9,6 +9,7 @@ use crate::tools::shell::ShellTools;
 use crate::tools::git::GitTools;
 use crate::tools::pillars::PillarTools;
 use crate::tools::web::WebTools;
+use crate::tools::daemon::DaemonRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -23,6 +24,7 @@ pub struct ToolRegistry {
     pub git: GitTools,
     pub pillars: PillarTools,
     pub web: WebTools,
+    pub daemons: DaemonRegistry,
     pub workspace_root: std::path::PathBuf,
 }
 
@@ -35,6 +37,7 @@ impl ToolRegistry {
             git: GitTools::new(&p),
             pillars: PillarTools::new(&p),
             web: WebTools::new(),
+            daemons: DaemonRegistry::new(),
             workspace_root: p,
         }
     }
@@ -212,6 +215,62 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {},
                     "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "update_memory".to_string(),
+                description: "Update persistent user preferences (~/.daedalus/USER.md) or project architectural memory (.daedalus/MEMORY.md).".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "scope": { "type": "string", "enum": ["user", "project"], "description": "Memory scope: 'user' for ~/.daedalus/USER.md, 'project' for .daedalus/MEMORY.md" },
+                        "content": { "type": "string", "description": "Markdown text note, guideline, or preference to record" }
+                    },
+                    "required": ["scope", "content"]
+                }),
+            },
+            ToolDefinition {
+                name: "start_daemon".to_string(),
+                description: "Start a long-running background process (dev server, test watcher, build) without blocking the agent.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "Shell command to run in the background" },
+                        "cwd": { "type": "string", "description": "Optional working directory" }
+                    },
+                    "required": ["command"]
+                }),
+            },
+            ToolDefinition {
+                name: "list_daemons".to_string(),
+                description: "List all active and recent background daemon processes with PID, uptime, and status.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "daemon_logs".to_string(),
+                description: "Retrieve recent stdout/stderr output lines from a background daemon process.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Daemon ID (e.g. 'd_01')" },
+                        "lines": { "type": "integer", "description": "Number of lines to read (default: 25)" }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            ToolDefinition {
+                name: "kill_daemon".to_string(),
+                description: "Terminate a running background daemon process by ID.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Daemon ID (e.g. 'd_01')" }
+                    },
+                    "required": ["id"]
                 }),
             },
         ]
@@ -408,6 +467,50 @@ impl ToolRegistry {
                     }
                 } else {
                     (false, "Active workspace has no parent directory.".to_string())
+                }
+            }
+            "start_daemon" => {
+                let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                let cwd_override = args.get("cwd").and_then(|v| v.as_str()).map(Path::new);
+                let cwd = cwd_override.unwrap_or(&self.workspace_root);
+                match self.daemons.start_daemon(command, cwd) {
+                    Ok(info) => (true, format!("[DAEMON STARTED] ID: {} · PID: {} · Command: '{}'", info.id, info.pid, info.command)),
+                    Err(e) => (false, format!("Failed to start daemon: {}", e)),
+                }
+            }
+            "list_daemons" => {
+                let list = self.daemons.list_daemons();
+                if list.is_empty() {
+                    (true, "No background daemons currently registered.".to_string())
+                } else {
+                    let mut out = format!("[ACTIVE DAEMONS (Total: {})]\n\n", list.len());
+                    for d in &list {
+                        let status_str = if d.is_alive { "RUNNING".to_string() } else { format!("EXITED ({:?})", d.exit_code) };
+                        out.push_str(&format!("- [{}] PID: {} · {} (Uptime: {}s) · Command: '{}'\n", d.id, d.pid, status_str, d.uptime_secs, d.command));
+                    }
+                    (true, out)
+                }
+            }
+            "daemon_logs" => {
+                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let lines = args.get("lines").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(25);
+                match self.daemons.get_daemon_logs(id, lines) {
+                    Some(logs) => {
+                        if logs.is_empty() {
+                            (true, format!("[DAEMON LOGS: {}] (No output recorded yet)", id))
+                        } else {
+                            (true, format!("[DAEMON LOGS: {} (Last {} lines)]\n\n{}", id, logs.len(), logs.join("\n")))
+                        }
+                    }
+                    None => (false, format!("Daemon with ID '{}' not found.", id)),
+                }
+            }
+            "kill_daemon" => {
+                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                match self.daemons.kill_daemon(id) {
+                    Ok(true) => (true, format!("[DAEMON KILLED] Process '{}' terminated.", id)),
+                    Ok(false) => (false, format!("Daemon '{}' was not active.", id)),
+                    Err(e) => (false, e),
                 }
             }
             _ => (false, format!("Unknown tool: {}", name)),

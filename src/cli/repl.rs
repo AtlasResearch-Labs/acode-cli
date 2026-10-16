@@ -88,6 +88,23 @@ impl DaedalusREPL {
                         }
                     }
 
+                    // Direct non-blocking background daemon spawn with '!&' prefix
+                    if trimmed.starts_with("!&") {
+                        let shell_cmd = trimmed[2..].trim();
+                        if !shell_cmd.is_empty() {
+                            println!();
+                            match self.orchestrator.tools.daemons.start_daemon(shell_cmd, &self.orchestrator.workspace_root) {
+                                Ok(job) => {
+                                    println!("{}[OK] Started background daemon [{}]: {}{}\n", TuiRenderer::GREEN, job.id, shell_cmd, TuiRenderer::RESET);
+                                }
+                                Err(e) => {
+                                    println!("{}[FAIL] Failed to spawn background daemon: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+
                     // Direct shell command bypass with '!' prefix
                     if trimmed.starts_with('!') {
                         let shell_cmd = trimmed[1..].trim();

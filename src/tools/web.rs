@@ -22,8 +22,19 @@ impl WebTools {
         Self { client }
     }
 
-    /// Multi-source web search (DuckDuckGo Lite + HackerNews Algolia fallback)
+    /// Multi-source web search with ThreatShield sanitization
     pub async fn web_search(&self, query: &str, max_results: usize) -> Result<String, String> {
+        let raw = self.web_search_raw(query, max_results).await?;
+        let (clean, alerts) = crate::security::threat_shield::ThreatShield::sanitize_web_content(&raw);
+        if alerts.is_empty() {
+            Ok(clean)
+        } else {
+            let alert_notes = alerts.iter().map(|a| format!("[THREAT_SHIELD INTERCEPT: {}] {}", a.threat_id, a.description)).collect::<Vec<_>>().join("\n");
+            Ok(format!("{}\n\n{}", alert_notes, clean))
+        }
+    }
+
+    async fn web_search_raw(&self, query: &str, max_results: usize) -> Result<String, String> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Err("Search query cannot be empty.".to_string());
@@ -130,8 +141,19 @@ impl WebTools {
         Ok(out.trim().to_string())
     }
 
-    /// Universal Web Fetcher with Smart Routing (Reddit, arXiv, YouTube, Direct, Jina Fallback)
+    /// Universal Web Fetcher with ThreatShield sanitization
     pub async fn web_fetch(&self, raw_url: &str, max_chars: usize) -> Result<String, String> {
+        let raw = self.web_fetch_raw(raw_url, max_chars).await?;
+        let (clean, alerts) = crate::security::threat_shield::ThreatShield::sanitize_web_content(&raw);
+        if alerts.is_empty() {
+            Ok(clean)
+        } else {
+            let alert_notes = alerts.iter().map(|a| format!("[THREAT_SHIELD INTERCEPT: {}] {}", a.threat_id, a.description)).collect::<Vec<_>>().join("\n");
+            Ok(format!("{}\n\n{}", alert_notes, clean))
+        }
+    }
+
+    async fn web_fetch_raw(&self, raw_url: &str, max_chars: usize) -> Result<String, String> {
         let url = raw_url.trim();
         if url.is_empty() {
             return Err("URL cannot be empty.".to_string());

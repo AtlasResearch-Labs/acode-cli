@@ -528,6 +528,153 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/memory" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() {
+                    println!("\n{}[PERSISTENT MEMORY LEDGER]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                    println!("{}User Profile (~/.daedalus/USER.md):{}", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    let user_prof = orchestrator.memory.get_user_profile();
+                    if user_prof.trim().is_empty() {
+                        println!("  (empty)");
+                    } else {
+                        for line in user_prof.lines() {
+                            println!("  {}", line);
+                        }
+                    }
+                    println!("\n{}Workspace Architectural Memory (.daedalus/MEMORY.md):{}", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    let proj_mem = orchestrator.memory.get_project_memory();
+                    if proj_mem.trim().is_empty() {
+                        println!("  (empty)");
+                    } else {
+                        for line in proj_mem.lines() {
+                            println!("  {}", line);
+                        }
+                    }
+                    println!("\nCommands:");
+                    println!("  /memory user <note>    - Append note/preference to global USER.md");
+                    println!("  /memory project <note> - Append architectural decision to workspace MEMORY.md\n");
+                } else {
+                    let target = parts[0].to_lowercase();
+                    let note = parts[1..].join(" ");
+                    if note.is_empty() {
+                        println!("{}Usage: /memory [user|project] <note to record>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                    } else if target == "user" {
+                        match orchestrator.memory.update_user_memory(&note) {
+                            Ok(_) => println!("{}[OK] Recorded note in ~/.daedalus/USER.md{}\n", TuiRenderer::GREEN, TuiRenderer::RESET),
+                            Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    } else if target == "project" {
+                        match orchestrator.memory.update_project_memory(&note) {
+                            Ok(_) => println!("{}[OK] Recorded note in .daedalus/MEMORY.md{}\n", TuiRenderer::GREEN, TuiRenderer::RESET),
+                            Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    } else {
+                        println!("{}Unknown memory target '{}'. Use 'user' or 'project'.{}\n", TuiRenderer::RED, target, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
+            "/blackbox" | "/flight" => {
+                let events = orchestrator.blackbox.read_recent_events(15);
+                if events.is_empty() {
+                    println!("{}No telemetry events recorded in .daedalus/blackbox.jsonl yet.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                } else {
+                    println!("\n{}[BLACKBOX FLIGHT RECORDER (RECENT 15 EVENTS)]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                    println!("Log path: {}{}{}\n", TuiRenderer::CYAN, orchestrator.blackbox.log_file.display(), TuiRenderer::RESET);
+                    for evt in events {
+                        let time = if evt.timestamp.len() >= 19 { &evt.timestamp[11..19] } else { &evt.timestamp };
+                        let status_color = if evt.status == "ok" { TuiRenderer::GREEN } else { TuiRenderer::YELLOW };
+                        let duration_str = evt.duration_ms.map(|d| format!(" ({}ms)", d)).unwrap_or_default();
+                        let short_hash = if evt.payload_hash.len() >= 8 { &evt.payload_hash[..8] } else { &evt.payload_hash };
+                        println!(
+                            "  [{}] {}{:12}{} {:14} {}{}{}{} #hash:{}",
+                            time,
+                            TuiRenderer::CYAN,
+                            evt.event_type,
+                            TuiRenderer::RESET,
+                            evt.source,
+                            status_color,
+                            evt.status,
+                            duration_str,
+                            TuiRenderer::RESET,
+                            short_hash
+                        );
+                        println!("      `-> {}", evt.payload_summary);
+                    }
+                    println!();
+                }
+                true
+            }
+            "/daemons" => {
+                let list = orchestrator.tools.daemons.list_daemons();
+                if list.is_empty() {
+                    println!("{}No background daemons currently managed.{}\nSpawn one via: !& <cmd> or start_daemon tool.\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                } else {
+                    println!("\n{}[BACKGROUND DAEMON REGISTRY]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
+                    for d in list {
+                        let status_badge = if d.is_alive {
+                            format!("{}[RUNNING]{}", TuiRenderer::GREEN, TuiRenderer::RESET)
+                        } else {
+                            format!("{}[EXIT: {}]{}", TuiRenderer::DIM, d.exit_code.unwrap_or(0), TuiRenderer::RESET)
+                        };
+                        println!("  - ID: {}{}{} | PID: {} | Uptime: {}s | Status: {}",
+                            TuiRenderer::CYAN, d.id, TuiRenderer::RESET, d.pid, d.uptime_secs, status_badge
+                        );
+                        println!("    Command: {}", d.command);
+                        if !d.recent_logs.is_empty() {
+                            let last = d.recent_logs.last().unwrap();
+                            println!("    Last output: {}{}{}", TuiRenderer::DIM, last, TuiRenderer::RESET);
+                        }
+                    }
+                    println!("\nCommands: /daemon logs <id> | /daemon kill <id> | /daemon start <cmd>\n");
+                }
+                true
+            }
+            "/daemon" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.len() < 2 {
+                    println!("{}Usage: /daemon [logs <id> | kill <id> | start <command>]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    return true;
+                }
+                let sub = parts[0].to_lowercase();
+                let target = parts[1];
+
+                match sub.as_str() {
+                    "logs" => {
+                        match orchestrator.tools.daemons.get_daemon_logs(target, 30) {
+                            Some(logs) => {
+                                println!("\n{}[DAEMON LOGS: {}]{}", TuiRenderer::BOLD, target, TuiRenderer::RESET);
+                                if logs.is_empty() {
+                                    println!("  (no output captured yet)");
+                                } else {
+                                    for line in logs {
+                                        println!("  {}", line);
+                                    }
+                                }
+                                println!();
+                            }
+                            None => println!("{}[FAIL] Daemon '{}' not found.{}\n", TuiRenderer::RED, target, TuiRenderer::RESET),
+                        }
+                    }
+                    "kill" => {
+                        match orchestrator.tools.daemons.kill_daemon(target) {
+                            Ok(_) => println!("{}[OK] Daemon '{}' terminated.{}\n", TuiRenderer::GREEN, target, TuiRenderer::RESET),
+                            Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
+                    "start" => {
+                        let cmd = parts[1..].join(" ");
+                        match orchestrator.tools.daemons.start_daemon(&cmd, &orchestrator.workspace_root) {
+                            Ok(info) => println!("{}[OK] Daemon '{}' spawned with PID {}: {}{}\n", TuiRenderer::GREEN, info.id, info.pid, cmd, TuiRenderer::RESET),
+                            Err(e) => println!("{}[FAIL] Failed to start daemon: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                        }
+                    }
+                    _ => {
+                        println!("{}Usage: /daemon [logs <id> | kill <id> | start <command>]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -563,6 +710,10 @@ impl SlashCommandHandler {
         println!("\n{}[ATLAS DAEDALUS COMMANDS]{}", TuiRenderer::BOLD, TuiRenderer::RESET);
         println!("  {}/help{}            - Show this command reference", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/security{}        - Manage agent security mode (/security mode full|sandboxed|strict)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/memory{}          - Inspect or update persistent USER.md and MEMORY.md", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/blackbox{}        - View BlackBox flight recorder telemetry & audit stream", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/daemons{}         - List and inspect background process daemons", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/daemon <action>{} - Manage daemon (logs <id>, kill <id>, start <cmd>)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/info{}            - Display active workspace root, git branch, and context", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/cd <path|@alias>{} - Switch active workspace root directory", TuiRenderer::CYAN, TuiRenderer::RESET);
@@ -583,6 +734,7 @@ impl SlashCommandHandler {
         println!("  {}/key <p> <key>{}   - Configure API key (gemini, anthropic, openai, powerbox)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/clear{}           - Clear console and reset conversational context", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/exit{}            - Terminate REPL session", TuiRenderer::CYAN, TuiRenderer::RESET);
-        println!("  {}!<command>{}        - Direct shell execution bypass (e.g. !git status, !dir)\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
+        println!("  {}!<cmd>{}            - Direct synchronous shell execution bypass", TuiRenderer::YELLOW, TuiRenderer::RESET);
+        println!("  {}!&<cmd>{}           - Direct non-blocking background daemon spawn\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
     }
 }

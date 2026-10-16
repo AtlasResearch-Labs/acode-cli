@@ -25,6 +25,16 @@ impl ShellTools {
     }
 
     pub async fn run_command(&self, command: &str, cwd: Option<&str>) -> ExecResult {
+        if let Err(threat) = crate::security::threat_shield::ThreatShield::audit_command(command) {
+            return ExecResult {
+                success: false,
+                stdout: String::new(),
+                stderr: format!("[THREAT_SHIELD INTERCEPT: {}] {}", threat.threat_id, threat.description),
+                exit_code: 126,
+                duration_ms: 0,
+            };
+        }
+
         let start = Instant::now();
         let target_cwd = match cwd {
             Some(d) => Path::new(d).to_path_buf(),

@@ -1,5 +1,7 @@
-//! Atlas Daedalus — Long-Term Memory & Helix Vector Engine
+//! Atlas Daedalus — Dual-Profile Persistent Memory Engine (Mneme Architecture)
+//! Manages global user profile (~/.daedalus/USER.md) and workspace architectural memory (<workspace>/.daedalus/MEMORY.md).
 
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,29 +23,88 @@ pub struct ProjectMemory {
 }
 
 pub struct MemoryEngine {
-    base_dir: PathBuf,
-    helix_dir: PathBuf,
-    memory_file: PathBuf,
+    pub workspace_root: PathBuf,
+    pub base_dir: PathBuf,
+    pub helix_dir: PathBuf,
+    pub memory_json_file: PathBuf,
+    pub project_memory_md: PathBuf,
+    pub user_profile_md: PathBuf,
     pub memory: ProjectMemory,
 }
 
 impl MemoryEngine {
     pub fn new<P: AsRef<Path>>(workspace_root: P) -> Self {
-        let base_dir = workspace_root.as_ref().join(".daedalus");
-        let helix_dir = workspace_root.as_ref().join(".helix").join("vectors");
-        let memory_file = base_dir.join("memory.json");
+        let ws = workspace_root.as_ref().to_path_buf();
+        let base_dir = ws.join(".daedalus");
+        let helix_dir = ws.join(".helix").join("vectors");
+        let memory_json_file = base_dir.join("memory.json");
+        let project_memory_md = base_dir.join("MEMORY.md");
 
-        let memory = Self::load_memory(&memory_file);
+        let home_dir = env::var("USERPROFILE")
+            .or_else(|_| env::var("HOME"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| ws.clone());
+        let user_profile_md = home_dir.join(".daedalus").join("USER.md");
 
-        Self {
+        let mut engine = Self {
+            workspace_root: ws,
             base_dir,
             helix_dir,
-            memory_file,
-            memory,
+            memory_json_file: memory_json_file.clone(),
+            project_memory_md,
+            user_profile_md,
+            memory: Self::load_json_memory(&memory_json_file),
+        };
+
+        engine.ensure_files();
+        engine
+    }
+
+    fn ensure_files(&mut self) {
+        let _ = fs::create_dir_all(&self.base_dir);
+
+        // Ensure global ~/.daedalus directory exists
+        if let Some(parent) = self.user_profile_md.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        // Initialize USER.md if missing
+        if !self.user_profile_md.exists() {
+            let default_user = "# User Profile & Preferences\n\
+                - User: Victor (Lead AI Architect)\n\
+                - Organization: Atlas Research Labs\n\
+                - Primary Projects: Atlas Daedalus, Orion, AI-Powerbox, Beacon, Chronicle\n\
+                - Preferred Tech Stack: Pure Rust, TypeScript, Tokio, Python, Node.js\n\
+                - Coding Style: Industrial, clean, modular, robust error handling, zero emojis\n\
+                - Communication Tone: Concise, high-density, technical, sovereign\n";
+            let _ = fs::write(&self.user_profile_md, default_user);
+        }
+
+        // Initialize workspace MEMORY.md if missing
+        if !self.project_memory_md.exists() {
+            let ws_name = self.workspace_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("workspace");
+            let default_project = format!(
+                "# Project Architectural Memory: {}\n\n\
+                ## Core Tech Stack\n\
+                - Workspace: {}\n\n\
+                ## Architectural Guidelines & Conventions\n\
+                - Maintained by Atlas Daedalus autonomous engine.\n\
+                - Prefer surgical patching over rewriting full files.\n\
+                - Verify all changes with project test suites before concluding.\n\n\
+                ## Key Decisions & Learnings\n\
+                - [{}] Initialized workspace architectural ledger.\n",
+                ws_name,
+                self.workspace_root.display(),
+                Utc::now().format("%Y-%m-%d")
+            );
+            let _ = fs::write(&self.project_memory_md, default_project);
         }
     }
 
-    fn load_memory(path: &Path) -> ProjectMemory {
+    fn load_json_memory(path: &Path) -> ProjectMemory {
         if path.exists() {
             if let Ok(content) = fs::read_to_string(path) {
                 if let Ok(mem) = serde_json::from_str::<ProjectMemory>(&content) {
@@ -64,42 +125,79 @@ impl MemoryEngine {
         let _ = fs::create_dir_all(&self.base_dir);
         self.memory.last_session_time = Utc::now().to_rfc3339();
         if let Ok(content) = serde_json::to_string_pretty(&self.memory) {
-            let _ = fs::write(&self.memory_file, content);
+            let _ = fs::write(&self.memory_json_file, content);
         }
+    }
+
+    pub fn get_user_profile(&self) -> String {
+        if self.user_profile_md.exists() {
+            fs::read_to_string(&self.user_profile_md).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn get_project_memory(&self) -> String {
+        if self.project_memory_md.exists() {
+            fs::read_to_string(&self.project_memory_md).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn update_user_memory(&mut self, text: &str) -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.user_profile_md)
+            .map_err(|e| format!("Failed to open USER.md: {}", e))?;
+        writeln!(file, "\n{}", text)
+            .map_err(|e| format!("Failed to write to USER.md: {}", e))
+    }
+
+    pub fn update_project_memory(&mut self, text: &str) -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.project_memory_md)
+            .map_err(|e| format!("Failed to open MEMORY.md: {}", e))?;
+        writeln!(file, "\n{}", text)
+            .map_err(|e| format!("Failed to write to MEMORY.md: {}", e))
     }
 
     pub fn add_convention(&mut self, rule: String) {
         if !self.memory.conventions.contains(&rule) {
-            self.memory.conventions.push(rule);
+            self.memory.conventions.push(rule.clone());
             self.save_memory();
+            let _ = self.update_project_memory(&format!("- Rule: {}", rule));
         }
     }
 
     pub fn add_decision(&mut self, summary: String) {
+        let now_str = Utc::now().format("%Y-%m-%d").to_string();
         self.memory.key_decisions.push(DecisionRecord {
             timestamp: Utc::now().to_rfc3339(),
-            summary,
+            summary: summary.clone(),
         });
         self.save_memory();
+        let _ = self.update_project_memory(&format!("- [{}] Decision: {}", now_str, summary));
     }
 
+    /// Assembles compact dual-profile memory context for the agent system prompt
     pub fn get_memory_context(&self) -> String {
-        let mut parts = Vec::new();
-        if !self.memory.tech_stack.is_empty() {
-            parts.push(format!("Tech Stack: {}", self.memory.tech_stack.join(", ")));
+        let mut sections = Vec::new();
+
+        let user_prof = self.get_user_profile().trim().to_string();
+        if !user_prof.is_empty() {
+            sections.push(format!("[USER PROFILE & PREFERENCES (from ~/.daedalus/USER.md)]\n{}", user_prof));
         }
-        if !self.memory.conventions.is_empty() {
-            let convs = self.memory.conventions.iter().map(|c| format!("- {}", c)).collect::<Vec<_>>().join("\n");
-            parts.push(format!("Project Rules & Conventions:\n{}", convs));
+
+        let proj_mem = self.get_project_memory().trim().to_string();
+        if !proj_mem.is_empty() {
+            sections.push(format!("[PROJECT ARCHITECTURAL MEMORY (from .daedalus/MEMORY.md)]\n{}", proj_mem));
         }
-        if !self.memory.key_decisions.is_empty() {
-            let decs = self.memory.key_decisions.iter().rev().take(5).map(|d| {
-                let date = if d.timestamp.len() >= 10 { &d.timestamp[0..10] } else { &d.timestamp };
-                format!("- [{}] {}", date, d.summary)
-            }).collect::<Vec<_>>().join("\n");
-            parts.push(format!("Recent Key Decisions:\n{}", decs));
-        }
-        parts.join("\n\n")
+
+        sections.join("\n\n")
     }
 
     pub fn sync_helix_vector(&self, collection: &str, id: &str, metadata: serde_json::Value) {

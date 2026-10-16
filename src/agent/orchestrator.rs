@@ -11,7 +11,9 @@ use crate::providers::router::ProviderRouter;
 use crate::providers::types::LLMMessage;
 use crate::security::{PermissionDecision, PermissionGate, SecurityMode};
 use crate::telemetry::chronicle::ChronicleTracer;
+use crate::telemetry::blackbox::BlackBoxRecorder;
 use crate::tools::registry::ToolRegistry;
+use crate::tools::spill::SpillGuard;
 
 pub enum AgentEvent<'a> {
     Thinking(&'a str),
@@ -28,6 +30,7 @@ pub struct DaedalusOrchestrator {
     pub tools: ToolRegistry,
     pub memory: MemoryEngine,
     pub chronicle: ChronicleTracer,
+    pub blackbox: BlackBoxRecorder,
     pub verifier: SelfHealingVerifier,
     pub compressor: TrajectoryCompressor,
     pub security: PermissionGate,
@@ -48,6 +51,7 @@ impl DaedalusOrchestrator {
             tools: ToolRegistry::new(&p),
             memory: MemoryEngine::new(&p),
             chronicle: ChronicleTracer::new(&p),
+            blackbox: BlackBoxRecorder::new(&p),
             verifier: SelfHealingVerifier::new(&p),
             compressor: TrajectoryCompressor::new(60000),
             security: PermissionGate::new(override_security),
@@ -73,11 +77,12 @@ impl DaedalusOrchestrator {
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory.\n\
                - web_search: Multi-source web search across DuckDuckGo, HackerNews, and tech discussions.\n\
                - web_fetch: Extract readable Markdown from any URL, Reddit thread (.json), arXiv paper, or YouTube video transcript.\n\
                - run_tests: Run automated project test suites to verify modifications.\n\
-               - list_workspaces: Discover and list sibling workspaces in the parent folder.\n\n\
+               - list_workspaces: Discover and list sibling workspaces in the parent folder.\n\
+               - update_memory: Record persistent user preferences (~/.daedalus/USER.md) or project architectural learnings (.daedalus/MEMORY.md).\n\n\
             WORKSPACE ROOT: {}\n{}",
             sec_mode,
             self.workspace_root.display(),
@@ -92,6 +97,7 @@ impl DaedalusOrchestrator {
         self.tools = ToolRegistry::new(&new_root);
         self.memory = MemoryEngine::new(&new_root);
         self.chronicle = ChronicleTracer::new(&new_root);
+        self.blackbox = BlackBoxRecorder::new(&new_root);
         self.verifier = SelfHealingVerifier::new(&new_root);
         self.compressor = TrajectoryCompressor::new(60000);
 
@@ -131,6 +137,8 @@ impl DaedalusOrchestrator {
     {
         let start = Instant::now();
         let mut files_modified = HashSet::new();
+
+        self.blackbox.record("task_start", "user", user_goal, None, "START");
 
         if self.history.is_empty() {
             self.history.push(LLMMessage {
@@ -272,7 +280,8 @@ impl DaedalusOrchestrator {
                     }
                 }
 
-                let (success, output) = if call.name == "change_workspace" {
+                let tool_exec_start = Instant::now();
+                let (success, raw_output) = if call.name == "change_workspace" {
                     let target_str = call.arguments.get("path")
                         .or_else(|| call.arguments.get("dir"))
                         .and_then(|v| v.as_str())
@@ -294,9 +303,49 @@ impl DaedalusOrchestrator {
                         let git_status = self.tools.git.get_status().await;
                         (true, format!("Successfully switched active workspace root to: {} (Git branch: {}, clean: {})", final_path.display(), git_status.branch, git_status.clean))
                     }
+                } else if call.name == "update_memory" {
+                    let scope = call.arguments.get("scope").and_then(|v| v.as_str()).unwrap_or("project");
+                    let content = call.arguments.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    if content.trim().is_empty() {
+                        (false, "Memory content cannot be empty.".to_string())
+                    } else if scope == "user" {
+                        match self.memory.update_user_memory(content) {
+                            Ok(_) => {
+                                let new_prompt = self.build_system_prompt();
+                                if let Some(first) = self.history.first_mut() {
+                                    if first.role == "system" { first.content = new_prompt; }
+                                }
+                                (true, format!("Successfully updated user profile in {}", self.memory.user_profile_md.display()))
+                            }
+                            Err(e) => (false, format!("Failed to update user memory: {}", e)),
+                        }
+                    } else {
+                        match self.memory.update_project_memory(content) {
+                            Ok(_) => {
+                                let new_prompt = self.build_system_prompt();
+                                if let Some(first) = self.history.first_mut() {
+                                    if first.role == "system" { first.content = new_prompt; }
+                                }
+                                (true, format!("Successfully updated project memory in {}", self.memory.project_memory_md.display()))
+                            }
+                            Err(e) => (false, format!("Failed to update project memory: {}", e)),
+                        }
+                    }
                 } else {
                     self.tools.execute_tool(&call.name, &call.arguments).await
                 };
+
+                let tool_duration = tool_exec_start.elapsed().as_millis() as u64;
+                self.blackbox.record(
+                    "tool_execution",
+                    &call.name,
+                    &raw_output,
+                    Some(tool_duration),
+                    if success { "OK" } else { "FAIL" },
+                );
+
+                // Context SpillGuard protection against oversized tool outputs
+                let (output, _spilled, _) = SpillGuard::spill_if_oversized(&self.workspace_root, &call.name, &raw_output);
                 if success {
                     if call.name == "patch_file" {
                         if let Some(p) = call.arguments.get("path").and_then(|v| v.as_str()) {
@@ -396,6 +445,14 @@ impl DaedalusOrchestrator {
             files_modified: &modified_vec,
             tools_called: total_tools_called,
         });
+
+        self.blackbox.record(
+            "task_complete",
+            "orchestrator",
+            &final_summary,
+            Some(start.elapsed().as_millis() as u64),
+            "COMPLETED",
+        );
 
         Ok(final_summary)
     }

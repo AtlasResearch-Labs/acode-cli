@@ -1,10 +1,10 @@
 //! Atlas Daedalus — Filesystem Tools (Ripgrep-grade traversal)
 
-use std::fs;
-use std::path::{Path, PathBuf};
 use ignore::WalkBuilder;
 use regex::Regex;
 use similar::TextDiff;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub struct FsTools {
     workspace_root: PathBuf,
@@ -26,7 +26,12 @@ impl FsTools {
         }
     }
 
-    pub fn view_file(&self, target_path: &str, start_line: Option<usize>, end_line: Option<usize>) -> Result<String, String> {
+    pub fn view_file(
+        &self,
+        target_path: &str,
+        start_line: Option<usize>,
+        end_line: Option<usize>,
+    ) -> Result<String, String> {
         let full_path = self.resolve_path(target_path);
         if !full_path.exists() {
             return Err(format!("File not found: {}", target_path));
@@ -50,7 +55,12 @@ impl FsTools {
         Ok(out)
     }
 
-    pub fn patch_file(&self, target_path: &str, target_content: &str, replacement_content: &str) -> Result<String, String> {
+    pub fn patch_file(
+        &self,
+        target_path: &str,
+        target_content: &str,
+        replacement_content: &str,
+    ) -> Result<String, String> {
         let full_path = self.resolve_path(target_path);
         if !full_path.exists() {
             return Err(format!("File not found: {}", target_path));
@@ -60,10 +70,16 @@ impl FsTools {
 
         let count = original.matches(target_content).count();
         if count == 0 {
-            return Err(format!("Target content block not found in {}. Ensure whitespace matches exactly.", target_path));
+            return Err(format!(
+                "Target content block not found in {}. Ensure whitespace matches exactly.",
+                target_path
+            ));
         }
         if count > 1 {
-            return Err(format!("Target content found {} times in {}. Must match uniquely.", count, target_path));
+            return Err(format!(
+                "Target content found {} times in {}. Must match uniquely.",
+                count, target_path
+            ));
         }
 
         let updated = original.replacen(target_content, replacement_content, 1);
@@ -71,9 +87,15 @@ impl FsTools {
 
         // Generate unified diff
         let diff = TextDiff::from_lines(&original, &updated);
-        let unified = diff.unified_diff().header("original", "patched").to_string();
+        let unified = diff
+            .unified_diff()
+            .header("original", "patched")
+            .to_string();
 
-        Ok(format!("Successfully patched {}.\n{}", target_path, unified))
+        Ok(format!(
+            "Successfully patched {}.\n{}",
+            target_path, unified
+        ))
     }
 
     pub fn write_file(&self, target_path: &str, content: &str) -> Result<String, String> {

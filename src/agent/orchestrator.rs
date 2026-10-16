@@ -4,25 +4,40 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::agent::tester::SelfHealingVerifier;
 use crate::agent::planner::TaskGraph;
+use crate::agent::tester::SelfHealingVerifier;
 use crate::context::compressor::{ChatMessage, TrajectoryCompressor};
 use crate::context::memory::MemoryEngine;
 use crate::providers::router::ProviderRouter;
 use crate::providers::types::LLMMessage;
 use crate::security::{PermissionDecision, PermissionGate, SecurityMode};
-use crate::telemetry::chronicle::ChronicleTracer;
 use crate::telemetry::blackbox::BlackBoxRecorder;
+use crate::telemetry::chronicle::ChronicleTracer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spill::SpillGuard;
 
 pub enum AgentEvent<'a> {
     Thinking(&'a str),
     Token(&'a str),
-    ToolStart { name: &'a str, args: &'a serde_json::Value },
-    ToolEnd { name: &'a str, success: bool, output: &'a str },
-    TestResult { command: &'a str, passed: bool, output: &'a str },
-    Done { summary: &'a str, files_modified: &'a [String], tools_called: usize },
+    ToolStart {
+        name: &'a str,
+        args: &'a serde_json::Value,
+    },
+    ToolEnd {
+        name: &'a str,
+        success: bool,
+        output: &'a str,
+    },
+    TestResult {
+        command: &'a str,
+        passed: bool,
+        output: &'a str,
+    },
+    Done {
+        summary: &'a str,
+        files_modified: &'a [String],
+        tools_called: usize,
+    },
     Error(&'a str),
 }
 
@@ -146,14 +161,21 @@ impl DaedalusOrchestrator {
     /// Centralized security gate evaluation for REPL shortcuts, slash commands, and autonomous tools.
     /// Intercepts operations that violate security policy or require human approval.
     pub fn check_gate(&mut self, tool_name: &str, args: &serde_json::Value) -> bool {
-        let decision = self.security.evaluate(tool_name, args, &self.workspace_root);
+        let decision = self
+            .security
+            .evaluate(tool_name, args, &self.workspace_root);
         match decision {
             PermissionDecision::Allow => true,
             PermissionDecision::Deny(reason) => {
                 crate::TuiRenderer::print_error(&format!("[SECURITY POLICY DENIED] {}", reason));
                 false
             }
-            PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+            PermissionDecision::Prompt {
+                reason,
+                details,
+                risk_level,
+                suggest_trust_path,
+            } => {
                 let allowed = self.security.prompt_user_interactive(
                     tool_name,
                     &reason,
@@ -162,7 +184,10 @@ impl DaedalusOrchestrator {
                     suggest_trust_path.as_deref(),
                 );
                 if !allowed {
-                    crate::TuiRenderer::print_error(&format!("[SECURITY CHALLENGE DENIED] Execution rejected: {}", details));
+                    crate::TuiRenderer::print_error(&format!(
+                        "[SECURITY CHALLENGE DENIED] Execution rejected: {}",
+                        details
+                    ));
                     false
                 } else {
                     true
@@ -210,7 +235,11 @@ impl DaedalusOrchestrator {
         self.run_task(&prompt, on_event).await
     }
 
-    pub async fn run_swarm<F>(&mut self, goal: &str, on_event: F) -> Result<crate::agent::swarm::SwarmOutcome, String>
+    pub async fn run_swarm<F>(
+        &mut self,
+        goal: &str,
+        on_event: F,
+    ) -> Result<crate::agent::swarm::SwarmOutcome, String>
     where
         F: FnMut(AgentEvent) + Send,
     {
@@ -233,7 +262,8 @@ impl DaedalusOrchestrator {
         let start = Instant::now();
         let mut files_modified = HashSet::new();
 
-        self.blackbox.record("task_start", "user", user_goal, None, "START");
+        self.blackbox
+            .record("task_start", "user", user_goal, None, "START");
 
         if self.history.is_empty() {
             self.history.push(LLMMessage {
@@ -259,6 +289,7 @@ impl DaedalusOrchestrator {
         let max_turns = 25;
         let mut final_summary = String::new();
         let mut total_tools_called = 0;
+        let think_re = regex::Regex::new(r"(?s)<think>.*?</think>").ok();
 
         while turns < max_turns {
             turns += 1;
@@ -269,42 +300,52 @@ impl DaedalusOrchestrator {
             }
 
             // Compress history
-            let chat_msgs: Vec<ChatMessage> = self.history.iter().map(|m| ChatMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-                tool_calls: m.tool_calls.clone(),
-                tool_call_id: m.tool_call_id.clone(),
-                name: m.name.clone(),
-            }).collect();
+            let chat_msgs: Vec<ChatMessage> = self
+                .history
+                .iter()
+                .map(|m| ChatMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    tool_calls: m.tool_calls.clone(),
+                    tool_call_id: m.tool_call_id.clone(),
+                    name: m.name.clone(),
+                })
+                .collect();
 
             let compressed = self.compressor.compress(chat_msgs);
             if compressed.len() < self.history.len() {
-                self.history = compressed.into_iter().map(|c| LLMMessage {
-                    role: c.role,
-                    content: c.content,
-                    tool_calls: c.tool_calls,
-                    tool_call_id: c.tool_call_id,
-                    name: c.name,
-                }).collect();
+                self.history = compressed
+                    .into_iter()
+                    .map(|c| LLMMessage {
+                        role: c.role,
+                        content: c.content,
+                        tool_calls: c.tool_calls,
+                        tool_call_id: c.tool_call_id,
+                        name: c.name,
+                    })
+                    .collect();
             }
 
             let mut in_think_block = false;
-            let res = self.provider.complete_stream(&self.history, &tool_defs, |token| {
-                if token.contains("<think>") {
-                    in_think_block = true;
-                }
-                if in_think_block {
-                    if token.contains("</think>") {
-                        in_think_block = false;
-                        on_event(AgentEvent::Thinking("Reasoning converged."));
+            let res = self
+                .provider
+                .complete_stream(&self.history, &tool_defs, |token| {
+                    if token.contains("<think>") {
+                        in_think_block = true;
                     }
-                } else {
-                    on_event(AgentEvent::Token(token));
-                }
-            }).await?;
+                    if in_think_block {
+                        if token.contains("</think>") {
+                            in_think_block = false;
+                            on_event(AgentEvent::Thinking("Reasoning converged."));
+                        }
+                    } else {
+                        on_event(AgentEvent::Token(token));
+                    }
+                })
+                .await?;
 
             let clean_content = if res.content.contains("<think>") {
-                if let Ok(re) = regex::Regex::new(r"(?s)<think>.*?</think>") {
+                if let Some(re) = &think_re {
                     re.replace_all(&res.content, "").trim().to_string()
                 } else {
                     res.content.clone()
@@ -314,7 +355,12 @@ impl DaedalusOrchestrator {
             };
 
             // Record Chronicle telemetry
-            let prompt_text: String = self.history.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join(" ");
+            let prompt_text: String = self
+                .history
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             let latency_ms = start.elapsed().as_millis() as u64;
 
             self.chronicle.record_span(
@@ -353,15 +399,25 @@ impl DaedalusOrchestrator {
 
             // Execute each tool call
             for call in &tool_calls {
-                on_event(AgentEvent::ToolStart { name: &call.name, args: &call.arguments });
+                on_event(AgentEvent::ToolStart {
+                    name: &call.name,
+                    args: &call.arguments,
+                });
 
                 // Security gate verification
-                let decision = self.security.evaluate(&call.name, &call.arguments, &self.workspace_root);
+                let decision =
+                    self.security
+                        .evaluate(&call.name, &call.arguments, &self.workspace_root);
                 match decision {
                     PermissionDecision::Allow => {}
                     PermissionDecision::Deny(reason) => {
-                        let output = format!("[SECURITY POLICY DENIED] Operation aborted: {}", reason);
-                        on_event(AgentEvent::ToolEnd { name: &call.name, success: false, output: &output });
+                        let output =
+                            format!("[SECURITY POLICY DENIED] Operation aborted: {}", reason);
+                        on_event(AgentEvent::ToolEnd {
+                            name: &call.name,
+                            success: false,
+                            output: &output,
+                        });
                         self.history.push(LLMMessage {
                             role: "tool".to_string(),
                             content: output,
@@ -371,7 +427,12 @@ impl DaedalusOrchestrator {
                         });
                         continue;
                     }
-                    PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+                    PermissionDecision::Prompt {
+                        reason,
+                        details,
+                        risk_level,
+                        suggest_trust_path,
+                    } => {
                         let allowed = self.security.prompt_user_interactive(
                             &call.name,
                             &reason,
@@ -381,7 +442,11 @@ impl DaedalusOrchestrator {
                         );
                         if !allowed {
                             let output = format!("[SECURITY CHALLENGE DENIED] User declined permission to execute: {}", details);
-                            on_event(AgentEvent::ToolEnd { name: &call.name, success: false, output: &output });
+                            on_event(AgentEvent::ToolEnd {
+                                name: &call.name,
+                                success: false,
+                                output: &output,
+                            });
                             self.history.push(LLMMessage {
                                 role: "tool".to_string(),
                                 content: output,
@@ -402,7 +467,9 @@ impl DaedalusOrchestrator {
 
                 let tool_exec_start = Instant::now();
                 let (success, raw_output) = if call.name == "change_workspace" {
-                    let target_str = call.arguments.get("path")
+                    let target_str = call
+                        .arguments
+                        .get("path")
                         .or_else(|| call.arguments.get("dir"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
@@ -424,8 +491,16 @@ impl DaedalusOrchestrator {
                         (true, format!("Successfully switched active workspace root to: {} (Git branch: {}, clean: {})", final_path.display(), git_status.branch, git_status.clean))
                     }
                 } else if call.name == "update_memory" {
-                    let scope = call.arguments.get("scope").and_then(|v| v.as_str()).unwrap_or("project");
-                    let content = call.arguments.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    let scope = call
+                        .arguments
+                        .get("scope")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("project");
+                    let content = call
+                        .arguments
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     if content.trim().is_empty() {
                         (false, "Memory content cannot be empty.".to_string())
                     } else if scope == "user" {
@@ -433,9 +508,17 @@ impl DaedalusOrchestrator {
                             Ok(_) => {
                                 let new_prompt = self.build_system_prompt();
                                 if let Some(first) = self.history.first_mut() {
-                                    if first.role == "system" { first.content = new_prompt; }
+                                    if first.role == "system" {
+                                        first.content = new_prompt;
+                                    }
                                 }
-                                (true, format!("Successfully updated user profile in {}", self.memory.user_profile_md.display()))
+                                (
+                                    true,
+                                    format!(
+                                        "Successfully updated user profile in {}",
+                                        self.memory.user_profile_md.display()
+                                    ),
+                                )
                             }
                             Err(e) => (false, format!("Failed to update user memory: {}", e)),
                         }
@@ -444,9 +527,17 @@ impl DaedalusOrchestrator {
                             Ok(_) => {
                                 let new_prompt = self.build_system_prompt();
                                 if let Some(first) = self.history.first_mut() {
-                                    if first.role == "system" { first.content = new_prompt; }
+                                    if first.role == "system" {
+                                        first.content = new_prompt;
+                                    }
                                 }
-                                (true, format!("Successfully updated project memory in {}", self.memory.project_memory_md.display()))
+                                (
+                                    true,
+                                    format!(
+                                        "Successfully updated project memory in {}",
+                                        self.memory.project_memory_md.display()
+                                    ),
+                                )
                             }
                             Err(e) => (false, format!("Failed to update project memory: {}", e)),
                         }
@@ -465,7 +556,8 @@ impl DaedalusOrchestrator {
                 );
 
                 // Context SpillGuard protection against oversized tool outputs
-                let (output, _spilled, _) = SpillGuard::spill_if_oversized(&self.workspace_root, &call.name, &raw_output);
+                let (output, _spilled, _) =
+                    SpillGuard::spill_if_oversized(&self.workspace_root, &call.name, &raw_output);
                 if success {
                     if call.name == "patch_file" {
                         if let Some(p) = call.arguments.get("path").and_then(|v| v.as_str()) {
@@ -473,13 +565,25 @@ impl DaedalusOrchestrator {
                         }
                     } else if call.name == "write_file" {
                         if let Some(p) = call.arguments.get("path").and_then(|v| v.as_str()) {
-                            let len = call.arguments.get("content").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
-                            self.session_diffs.push((p.to_string(), format!("+++ Created/Updated file: {} ({} bytes)", p, len)));
+                            let len = call
+                                .arguments
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.len())
+                                .unwrap_or(0);
+                            self.session_diffs.push((
+                                p.to_string(),
+                                format!("+++ Created/Updated file: {} ({} bytes)", p, len),
+                            ));
                         }
                     }
                 }
 
-                on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
+                on_event(AgentEvent::ToolEnd {
+                    name: &call.name,
+                    success,
+                    output: &output,
+                });
 
                 self.history.push(LLMMessage {
                     role: "tool".to_string(),
@@ -494,8 +598,13 @@ impl DaedalusOrchestrator {
         // Run self-healing verifier if files were modified
         if !files_modified.is_empty() {
             let modified_list: Vec<String> = files_modified.iter().cloned().collect();
-            on_event(AgentEvent::Thinking("Running targeted verification test suite..."));
-            let mut verify_res = self.verifier.run_targeted_verification(&modified_list).await;
+            on_event(AgentEvent::Thinking(
+                "Running targeted verification test suite...",
+            ));
+            let mut verify_res = self
+                .verifier
+                .run_targeted_verification(&modified_list)
+                .await;
 
             if verify_res.has_tests {
                 let cmd_str = verify_res.command.as_deref().unwrap_or("").to_string();
@@ -510,7 +619,10 @@ impl DaedalusOrchestrator {
 
                 while !verify_res.passed && repair_attempt < max_repair_attempts {
                     repair_attempt += 1;
-                    let repair_status = format!("Self-healing repair loop attempt {}/{}...", repair_attempt, max_repair_attempts);
+                    let repair_status = format!(
+                        "Self-healing repair loop attempt {}/{}...",
+                        repair_attempt, max_repair_attempts
+                    );
                     on_event(AgentEvent::Thinking(&repair_status));
 
                     self.history.push(LLMMessage {
@@ -524,9 +636,13 @@ impl DaedalusOrchestrator {
                         name: None,
                     });
 
-                    if let Ok(repair_res) = self.provider.complete_stream(&self.history, &tool_defs, |token| {
-                        on_event(AgentEvent::Token(token));
-                    }).await {
+                    if let Ok(repair_res) = self
+                        .provider
+                        .complete_stream(&self.history, &tool_defs, |token| {
+                            on_event(AgentEvent::Token(token));
+                        })
+                        .await
+                    {
                         self.history.push(LLMMessage {
                             role: "assistant".to_string(),
                             content: repair_res.content.clone(),
@@ -537,17 +653,33 @@ impl DaedalusOrchestrator {
 
                         if let Some(repair_calls) = repair_res.tool_calls {
                             for call in &repair_calls {
-                                on_event(AgentEvent::ToolStart { name: &call.name, args: &call.arguments });
+                                on_event(AgentEvent::ToolStart {
+                                    name: &call.name,
+                                    args: &call.arguments,
+                                });
 
-                                let decision = self.security.evaluate(&call.name, &call.arguments, &self.workspace_root);
+                                let decision = self.security.evaluate(
+                                    &call.name,
+                                    &call.arguments,
+                                    &self.workspace_root,
+                                );
                                 let (success, output): (bool, String) = match decision {
                                     PermissionDecision::Allow => {
                                         self.tools.execute_tool(&call.name, &call.arguments).await
                                     }
-                                    PermissionDecision::Deny(reason) => {
-                                        (false, format!("[SECURITY POLICY DENIED] Operation aborted: {}", reason))
-                                    }
-                                    PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+                                    PermissionDecision::Deny(reason) => (
+                                        false,
+                                        format!(
+                                            "[SECURITY POLICY DENIED] Operation aborted: {}",
+                                            reason
+                                        ),
+                                    ),
+                                    PermissionDecision::Prompt {
+                                        reason,
+                                        details,
+                                        risk_level,
+                                        suggest_trust_path,
+                                    } => {
                                         let allowed = self.security.prompt_user_interactive(
                                             &call.name,
                                             &reason,
@@ -556,14 +688,20 @@ impl DaedalusOrchestrator {
                                             suggest_trust_path.as_deref(),
                                         );
                                         if allowed {
-                                            self.tools.execute_tool(&call.name, &call.arguments).await
+                                            self.tools
+                                                .execute_tool(&call.name, &call.arguments)
+                                                .await
                                         } else {
                                             (false, "[USER DENIED] Security permission rejected by operator.".to_string())
                                         }
                                     }
                                 };
 
-                                on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
+                                on_event(AgentEvent::ToolEnd {
+                                    name: &call.name,
+                                    success,
+                                    output: &output,
+                                });
                                 self.history.push(LLMMessage {
                                     role: "tool".to_string(),
                                     content: output,
@@ -576,7 +714,10 @@ impl DaedalusOrchestrator {
                     }
 
                     // Re-verify after repair tools executed
-                    verify_res = self.verifier.run_targeted_verification(&modified_list).await;
+                    verify_res = self
+                        .verifier
+                        .run_targeted_verification(&modified_list)
+                        .await;
                     on_event(AgentEvent::TestResult {
                         command: &cmd_str,
                         passed: verify_res.passed,

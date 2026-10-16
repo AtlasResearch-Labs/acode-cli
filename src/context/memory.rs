@@ -1,12 +1,12 @@
 //! Atlas Daedalus — Dual-Profile Persistent Memory Engine (Mneme Architecture)
 //! Manages global user profile (~/.daedalus/USER.md) and workspace architectural memory (<workspace>/.daedalus/MEMORY.md).
 
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRecord {
@@ -87,7 +87,8 @@ impl MemoryEngine {
 
         // Initialize workspace MEMORY.md if missing
         if !self.project_memory_md.exists() {
-            let ws_name = self.workspace_root
+            let ws_name = self
+                .workspace_root
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("workspace");
@@ -119,7 +120,10 @@ impl MemoryEngine {
             };
             let has_daedalus = content.lines().any(|l| {
                 let trimmed = l.trim();
-                trimmed == ".daedalus" || trimmed == ".daedalus/" || trimmed == "/.daedalus/" || trimmed == "/.daedalus"
+                trimmed == ".daedalus"
+                    || trimmed == ".daedalus/"
+                    || trimmed == "/.daedalus/"
+                    || trimmed == "/.daedalus"
             });
             if !has_daedalus {
                 if !content.is_empty() && !content.ends_with('\n') {
@@ -178,8 +182,7 @@ impl MemoryEngine {
             .append(true)
             .open(&self.user_profile_md)
             .map_err(|e| format!("Failed to open USER.md: {}", e))?;
-        writeln!(file, "\n{}", text)
-            .map_err(|e| format!("Failed to write to USER.md: {}", e))
+        writeln!(file, "\n{}", text).map_err(|e| format!("Failed to write to USER.md: {}", e))
     }
 
     pub fn update_project_memory(&mut self, text: &str) -> Result<(), String> {
@@ -188,8 +191,7 @@ impl MemoryEngine {
             .append(true)
             .open(&self.project_memory_md)
             .map_err(|e| format!("Failed to open MEMORY.md: {}", e))?;
-        writeln!(file, "\n{}", text)
-            .map_err(|e| format!("Failed to write to MEMORY.md: {}", e))
+        writeln!(file, "\n{}", text).map_err(|e| format!("Failed to write to MEMORY.md: {}", e))
     }
 
     pub fn add_convention(&mut self, rule: String) {
@@ -216,12 +218,18 @@ impl MemoryEngine {
 
         let user_prof = self.get_user_profile().trim().to_string();
         if !user_prof.is_empty() {
-            sections.push(format!("[USER PROFILE & PREFERENCES (from ~/.daedalus/USER.md)]\n{}", user_prof));
+            sections.push(format!(
+                "[USER PROFILE & PREFERENCES (from ~/.daedalus/USER.md)]\n{}",
+                user_prof
+            ));
         }
 
         let proj_mem = self.get_project_memory().trim().to_string();
         if !proj_mem.is_empty() {
-            sections.push(format!("[PROJECT ARCHITECTURAL MEMORY (from .daedalus/MEMORY.md)]\n{}", proj_mem));
+            sections.push(format!(
+                "[PROJECT ARCHITECTURAL MEMORY (from .daedalus/MEMORY.md)]\n{}",
+                proj_mem
+            ));
         }
 
         sections.join("\n\n")

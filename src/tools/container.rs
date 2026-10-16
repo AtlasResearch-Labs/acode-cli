@@ -2,9 +2,9 @@
 //! Direct control over Docker and Podman container lifecycles, log streaming,
 //! port discovery, and compose orchestrations without manual terminal guesswork.
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Command;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerSummary {
@@ -29,14 +29,18 @@ impl ContainerManager {
         let check = |cli: &str| -> bool {
             let mut cmd = if is_win {
                 let mut c = Command::new("powershell.exe");
-                c.arg("-NoProfile").arg("-Command").arg(format!("Get-Command {} -ErrorAction SilentlyContinue", cli));
+                c.arg("-NoProfile")
+                    .arg("-Command")
+                    .arg(format!("Get-Command {} -ErrorAction SilentlyContinue", cli));
                 c
             } else {
                 let mut c = Command::new("which");
                 c.arg(cli);
                 c
             };
-            cmd.output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false)
+            cmd.output()
+                .map(|o| o.status.success() && !o.stdout.is_empty())
+                .unwrap_or(false)
         };
 
         if check("docker") {
@@ -50,18 +54,30 @@ impl ContainerManager {
 
     /// Checks daemon ping/status
     pub fn check_status(&self) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "Neither 'docker' nor 'podman' executable found in system PATH.".to_string())?;
+        let cli = Self::detect_cli().ok_or_else(|| {
+            "Neither 'docker' nor 'podman' executable found in system PATH.".to_string()
+        })?;
 
-        let res = Self::run_raw(cli, &["info", "--format", "{{.ServerVersion}}"], Path::new("."));
+        let res = Self::run_raw(
+            cli,
+            &["info", "--format", "{{.ServerVersion}}"],
+            Path::new("."),
+        );
         match res {
-            Ok(ver) if !ver.is_empty() => Ok(format!("{} daemon active (Server Version: {})", cli, ver.trim())),
+            Ok(ver) if !ver.is_empty() => Ok(format!(
+                "{} daemon active (Server Version: {})",
+                cli,
+                ver.trim()
+            )),
             _ => {
                 // Fallback check
                 let fallback = Self::run_raw(cli, &["version"], Path::new("."));
                 match fallback {
                     Ok(_) => Ok(format!("{} CLI is available and responsive.", cli)),
-                    Err(e) => Err(format!("{} is installed but daemon is unreachable: {}", cli, e)),
+                    Err(e) => Err(format!(
+                        "{} is installed but daemon is unreachable: {}",
+                        cli, e
+                    )),
                 }
             }
         }
@@ -72,7 +88,11 @@ impl ContainerManager {
         let cli = Self::detect_cli()
             .ok_or_else(|| "No container runtime (docker/podman) available.".to_string())?;
 
-        let mut args = vec!["ps", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}|{{.Ports}}"];
+        let mut args = vec![
+            "ps",
+            "--format",
+            "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}|{{.Ports}}",
+        ];
         if all {
             args.insert(1, "-a");
         }
@@ -108,8 +128,8 @@ impl ContainerManager {
 
     /// Fetches recent stdout/stderr logs from a container
     pub fn get_logs(&self, target: &str, line_count: usize) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "No container runtime available.".to_string())?;
+        let cli =
+            Self::detect_cli().ok_or_else(|| "No container runtime available.".to_string())?;
 
         let lines_str = line_count.to_string();
         let args = ["logs", "--tail", &lines_str, target];
@@ -118,8 +138,8 @@ impl ContainerManager {
 
     /// Inspects container configuration in concise summary
     pub fn inspect_container(&self, target: &str) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "No container runtime available.".to_string())?;
+        let cli =
+            Self::detect_cli().ok_or_else(|| "No container runtime available.".to_string())?;
 
         let args = [
             "inspect",
@@ -133,8 +153,8 @@ impl ContainerManager {
 
     /// Launches docker-compose or podman-compose up
     pub fn compose_up(&self, cwd: &Path) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "No container runtime available.".to_string())?;
+        let cli =
+            Self::detect_cli().ok_or_else(|| "No container runtime available.".to_string())?;
 
         if cli == "docker" {
             // Try 'docker compose up -d' first
@@ -149,8 +169,8 @@ impl ContainerManager {
 
     /// Tears down docker-compose or podman-compose
     pub fn compose_down(&self, cwd: &Path) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "No container runtime available.".to_string())?;
+        let cli =
+            Self::detect_cli().ok_or_else(|| "No container runtime available.".to_string())?;
 
         if cli == "docker" {
             match Self::run_raw("docker", &["compose", "down"], cwd) {
@@ -164,16 +184,16 @@ impl ContainerManager {
 
     /// Stops a specific container
     pub fn stop_container(&self, target: &str) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "No container runtime available.".to_string())?;
+        let cli =
+            Self::detect_cli().ok_or_else(|| "No container runtime available.".to_string())?;
 
         Self::run_raw(cli, &["stop", target], Path::new("."))
     }
 
     /// Restarts a specific container
     pub fn restart_container(&self, target: &str) -> Result<String, String> {
-        let cli = Self::detect_cli()
-            .ok_or_else(|| "No container runtime available.".to_string())?;
+        let cli =
+            Self::detect_cli().ok_or_else(|| "No container runtime available.".to_string())?;
 
         Self::run_raw(cli, &["restart", target], Path::new("."))
     }

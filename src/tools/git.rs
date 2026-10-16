@@ -1,8 +1,8 @@
 //! Atlas Daedalus — Git Tools
 
+use crate::tools::shell::ShellTools;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
-use crate::tools::shell::ShellTools;
 
 #[derive(Debug, Clone)]
 pub struct GitStatusResult {
@@ -28,7 +28,10 @@ impl GitTools {
     }
 
     pub async fn get_status(&self) -> GitStatusResult {
-        let res = self.shell.run_command("git status --short --branch", None).await;
+        let res = self
+            .shell
+            .run_command("git status --short --branch", None)
+            .await;
         if !res.success {
             return GitStatusResult {
                 is_repo: false,
@@ -40,7 +43,8 @@ impl GitTools {
         }
 
         let lines: Vec<&str> = res.stdout.lines().collect();
-        let branch = lines.first()
+        let branch = lines
+            .first()
             .and_then(|l| l.strip_prefix("## "))
             .and_then(|b| b.split("...").next())
             .unwrap_or("HEAD")
@@ -55,10 +59,11 @@ impl GitTools {
             if trimmed.is_empty() {
                 continue;
             }
-            if trimmed.starts_with("??") {
-                untracked.push(trimmed[2..].trim().to_string());
+            if let Some(stripped) = trimmed.strip_prefix("??") {
+                untracked.push(stripped.trim().to_string());
             } else if trimmed.len() > 3 {
-                modified.push(trimmed[2..].trim().to_string());
+                let rest = trimmed.chars().skip(2).collect::<String>();
+                modified.push(rest.trim().to_string());
             }
         }
 
@@ -88,7 +93,10 @@ impl GitTools {
         let staged_diff = self.get_diff(true).await;
         if staged_diff.trim().is_empty() {
             let mut add_cmd = Command::new("git");
-            add_cmd.arg("add").arg("-u").current_dir(&self.workspace_root);
+            add_cmd
+                .arg("add")
+                .arg("-u")
+                .current_dir(&self.workspace_root);
             let _ = add_cmd.output().await;
         }
 
@@ -103,7 +111,11 @@ impl GitTools {
             Ok(output) => {
                 if output.status.success() {
                     let mut rev_cmd = Command::new("git");
-                    rev_cmd.arg("rev-parse").arg("--short").arg("HEAD").current_dir(&self.workspace_root);
+                    rev_cmd
+                        .arg("rev-parse")
+                        .arg("--short")
+                        .arg("HEAD")
+                        .current_dir(&self.workspace_root);
                     if let Ok(rev_out) = rev_cmd.output().await {
                         Ok(String::from_utf8_lossy(&rev_out.stdout).trim().to_string())
                     } else {

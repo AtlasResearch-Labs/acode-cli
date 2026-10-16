@@ -1,9 +1,9 @@
 //! Atlas Daedalus — Security Config Persistence
 //! (C) 2026 Atlas Research Labs — MIT License
 
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 use crate::security::policy::SecurityMode;
 
@@ -28,7 +28,9 @@ pub struct SecurityStorage;
 
 impl SecurityStorage {
     fn config_path() -> Option<PathBuf> {
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()?;
         Some(PathBuf::from(home).join(".daedalus").join("security.json"))
     }
 

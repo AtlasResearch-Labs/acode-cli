@@ -1,20 +1,20 @@
 //! Atlas Daedalus — Central Tool Registry
 
-use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
 
-use crate::tools::fs::FsTools;
-use crate::tools::shell::ShellTools;
-use crate::tools::git::GitTools;
-use crate::tools::pillars::PillarTools;
-use crate::tools::web::WebTools;
+use crate::tools::container::ContainerManager;
 use crate::tools::daemon::DaemonRegistry;
 use crate::tools::deps::DependencyManager;
-use crate::tools::container::ContainerManager;
-use crate::tools::symbols::SymbolEngine;
-use crate::tools::sandbox::ShadowSandbox;
+use crate::tools::fs::FsTools;
+use crate::tools::git::GitTools;
 use crate::tools::mcp::McpManager;
+use crate::tools::pillars::PillarTools;
+use crate::tools::sandbox::ShadowSandbox;
+use crate::tools::shell::ShellTools;
+use crate::tools::symbols::SymbolEngine;
+use crate::tools::web::WebTools;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -406,13 +406,20 @@ impl ToolRegistry {
 
         match name {
             "view_file" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .or_else(|| args.get("file"))
                     .or_else(|| args.get("file_path"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let start_line = args.get("start_line").and_then(|v| v.as_u64()).map(|n| n as usize);
-                let end_line = args.get("end_line").and_then(|v| v.as_u64()).map(|n| n as usize);
+                let start_line = args
+                    .get("start_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize);
+                let end_line = args
+                    .get("end_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize);
 
                 match self.fs.view_file(path, start_line, end_line) {
                     Ok(c) => (true, c),
@@ -420,12 +427,19 @@ impl ToolRegistry {
                 }
             }
             "patch_file" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .or_else(|| args.get("file"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let target = args.get("target_content").and_then(|v| v.as_str()).unwrap_or("");
-                let rep = args.get("replacement_content").and_then(|v| v.as_str()).unwrap_or("");
+                let target = args
+                    .get("target_content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let rep = args
+                    .get("replacement_content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 match self.fs.patch_file(path, target, rep) {
                     Ok(s) => (true, s),
@@ -433,7 +447,8 @@ impl ToolRegistry {
                 }
             }
             "write_file" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .or_else(|| args.get("file"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
@@ -456,20 +471,30 @@ impl ToolRegistry {
                 if !res.stderr.is_empty() {
                     out.push_str(&format!("STDERR:\n{}\n", res.stderr));
                 }
-                out.push_str(&format!("Exit code: {} ({}ms)", res.exit_code, res.duration_ms));
+                out.push_str(&format!(
+                    "Exit code: {} ({}ms)",
+                    res.exit_code, res.duration_ms
+                ));
                 (res.success, out)
             }
             "list_dir" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .or_else(|| args.get("dir"))
                     .and_then(|v| v.as_str())
                     .unwrap_or(".");
-                let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+                let recursive = args
+                    .get("recursive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 match self.fs.list_dir(path, recursive) {
                     Ok(files) => {
                         if files.is_empty() {
-                            (true, format!("(directory is empty or all items ignored: {})", path))
+                            (
+                                true,
+                                format!("(directory is empty or all items ignored: {})", path),
+                            )
                         } else {
                             (true, files.join("\n"))
                         }
@@ -478,11 +503,13 @@ impl ToolRegistry {
                 }
             }
             "search_code" => {
-                let query = args.get("query")
+                let query = args
+                    .get("query")
                     .or_else(|| args.get("pattern"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let dir = args.get("dir")
+                let dir = args
+                    .get("dir")
                     .or_else(|| args.get("path"))
                     .and_then(|v| v.as_str())
                     .unwrap_or(".");
@@ -490,7 +517,10 @@ impl ToolRegistry {
                 match self.fs.search_code(query, dir) {
                     Ok(matches) => {
                         if matches.is_empty() {
-                            (true, format!("No matches found for '{}' in {}.", query, dir))
+                            (
+                                true,
+                                format!("No matches found for '{}' in {}.", query, dir),
+                            )
                         } else {
                             (true, matches.join("\n"))
                         }
@@ -521,9 +551,19 @@ impl ToolRegistry {
                 (true, out.to_string())
             }
             "git_diff" => {
-                let staged = args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let staged = args
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let diff = self.git.get_diff(staged).await;
-                (true, if diff.is_empty() { "No diff.".to_string() } else { diff })
+                (
+                    true,
+                    if diff.is_empty() {
+                        "No diff.".to_string()
+                    } else {
+                        diff
+                    },
+                )
             }
             "argus_audit" => {
                 let target = args.get("target").and_then(|v| v.as_str()).unwrap_or(".");
@@ -533,12 +573,20 @@ impl ToolRegistry {
             "beacon_tunnel" => {
                 let port = args.get("port").and_then(|v| v.as_u64()).unwrap_or(3000) as u16;
                 let subdomain = args.get("subdomain").and_then(|v| v.as_str());
-                let (success, url, inspector) = self.pillars.start_beacon_tunnel(port, subdomain).await;
-                (success, format!("Live URL: {}\nInspector: {}", url, inspector))
+                let (success, url, inspector) =
+                    self.pillars.start_beacon_tunnel(port, subdomain).await;
+                (
+                    success,
+                    format!("Live URL: {}\nInspector: {}", url, inspector),
+                )
             }
             "web_search" => {
                 let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                let max_results = args.get("max_results").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(5);
+                let max_results = args
+                    .get("max_results")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(5);
                 match self.web.web_search(query, max_results).await {
                     Ok(res) => (true, res),
                     Err(e) => (false, e),
@@ -546,7 +594,11 @@ impl ToolRegistry {
             }
             "web_fetch" => {
                 let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(8000);
+                let max_chars = args
+                    .get("max_chars")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(8000);
                 match self.web.web_fetch(url, max_chars).await {
                     Ok(res) => (true, res),
                     Err(e) => (false, e),
@@ -557,16 +609,21 @@ impl ToolRegistry {
                 let cwd = args.get("cwd").and_then(|v| v.as_str());
                 let test_cmd = match cmd {
                     Some(c) => c.to_string(),
-                    None => {
-                        crate::agent::tester::SelfHealingVerifier::new(&self.workspace_root)
-                            .detect_test_command()
-                            .unwrap_or_else(|| "cargo test".to_string())
-                    }
+                    None => crate::agent::tester::SelfHealingVerifier::new(&self.workspace_root)
+                        .detect_test_command()
+                        .unwrap_or_else(|| "cargo test".to_string()),
                 };
                 let res = self.shell.run_command(&test_cmd, cwd).await;
-                let mut out = format!("Test Command: {}\nExit code: {}\nPassed: {}\n\n", test_cmd, res.exit_code, res.success);
-                if !res.stdout.is_empty() { out.push_str(&format!("STDOUT:\n{}\n", res.stdout)); }
-                if !res.stderr.is_empty() { out.push_str(&format!("STDERR:\n{}\n", res.stderr)); }
+                let mut out = format!(
+                    "Test Command: {}\nExit code: {}\nPassed: {}\n\n",
+                    test_cmd, res.exit_code, res.success
+                );
+                if !res.stdout.is_empty() {
+                    out.push_str(&format!("STDOUT:\n{}\n", res.stdout));
+                }
+                if !res.stderr.is_empty() {
+                    out.push_str(&format!("STDERR:\n{}\n", res.stderr));
+                }
                 (res.success, out)
             }
             "list_workspaces" => {
@@ -587,13 +644,32 @@ impl ToolRegistry {
                         if dirs.is_empty() {
                             (true, "No sibling directories found in parent.".to_string())
                         } else {
-                            (true, format!("Parent Directory: {}\nWorkspaces:\n{}", parent.display(), dirs.iter().map(|d| format!("- {}", d)).collect::<Vec<_>>().join("\n")))
+                            (
+                                true,
+                                format!(
+                                    "Parent Directory: {}\nWorkspaces:\n{}",
+                                    parent.display(),
+                                    dirs.iter()
+                                        .map(|d| format!("- {}", d))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                ),
+                            )
                         }
                     } else {
-                        (false, format!("Cannot read parent directory of {}", self.workspace_root.display()))
+                        (
+                            false,
+                            format!(
+                                "Cannot read parent directory of {}",
+                                self.workspace_root.display()
+                            ),
+                        )
                     }
                 } else {
-                    (false, "Active workspace has no parent directory.".to_string())
+                    (
+                        false,
+                        "Active workspace has no parent directory.".to_string(),
+                    )
                 }
             }
             "start_daemon" => {
@@ -601,32 +677,63 @@ impl ToolRegistry {
                 let cwd_override = args.get("cwd").and_then(|v| v.as_str()).map(Path::new);
                 let cwd = cwd_override.unwrap_or(&self.workspace_root);
                 match self.daemons.start_daemon(command, cwd) {
-                    Ok(info) => (true, format!("[DAEMON STARTED] ID: {} · PID: {} · Command: '{}'", info.id, info.pid, info.command)),
+                    Ok(info) => (
+                        true,
+                        format!(
+                            "[DAEMON STARTED] ID: {} · PID: {} · Command: '{}'",
+                            info.id, info.pid, info.command
+                        ),
+                    ),
                     Err(e) => (false, format!("Failed to start daemon: {}", e)),
                 }
             }
             "list_daemons" => {
                 let list = self.daemons.list_daemons();
                 if list.is_empty() {
-                    (true, "No background daemons currently registered.".to_string())
+                    (
+                        true,
+                        "No background daemons currently registered.".to_string(),
+                    )
                 } else {
                     let mut out = format!("[ACTIVE DAEMONS (Total: {})]\n\n", list.len());
                     for d in &list {
-                        let status_str = if d.is_alive { "RUNNING".to_string() } else { format!("EXITED ({:?})", d.exit_code) };
-                        out.push_str(&format!("- [{}] PID: {} · {} (Uptime: {}s) · Command: '{}'\n", d.id, d.pid, status_str, d.uptime_secs, d.command));
+                        let status_str = if d.is_alive {
+                            "RUNNING".to_string()
+                        } else {
+                            format!("EXITED ({:?})", d.exit_code)
+                        };
+                        out.push_str(&format!(
+                            "- [{}] PID: {} · {} (Uptime: {}s) · Command: '{}'\n",
+                            d.id, d.pid, status_str, d.uptime_secs, d.command
+                        ));
                     }
                     (true, out)
                 }
             }
             "daemon_logs" => {
                 let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let lines = args.get("lines").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(25);
+                let lines = args
+                    .get("lines")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(25);
                 match self.daemons.get_daemon_logs(id, lines) {
                     Some(logs) => {
                         if logs.is_empty() {
-                            (true, format!("[DAEMON LOGS: {}] (No output recorded yet)", id))
+                            (
+                                true,
+                                format!("[DAEMON LOGS: {}] (No output recorded yet)", id),
+                            )
                         } else {
-                            (true, format!("[DAEMON LOGS: {} (Last {} lines)]\n\n{}", id, logs.len(), logs.join("\n")))
+                            (
+                                true,
+                                format!(
+                                    "[DAEMON LOGS: {} (Last {} lines)]\n\n{}",
+                                    id,
+                                    logs.len(),
+                                    logs.join("\n")
+                                ),
+                            )
                         }
                     }
                     None => (false, format!("Daemon with ID '{}' not found.", id)),
@@ -635,140 +742,202 @@ impl ToolRegistry {
             "kill_daemon" => {
                 let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 match self.daemons.kill_daemon(id) {
-                    Ok(true) => (true, format!("[DAEMON KILLED] Process '{}' terminated.", id)),
+                    Ok(true) => (
+                        true,
+                        format!("[DAEMON KILLED] Process '{}' terminated.", id),
+                    ),
                     Ok(false) => (false, format!("Daemon '{}' was not active.", id)),
                     Err(e) => (false, e),
                 }
             }
             "manage_dependencies" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("list");
                 let package = args.get("package").and_then(|v| v.as_str()).unwrap_or("");
                 let version = args.get("version").and_then(|v| v.as_str());
-                let is_dev = args.get("is_dev").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_dev = args
+                    .get("is_dev")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 match action {
-                    "list" => {
-                        match self.deps.list_dependencies(&self.workspace_root) {
-                            Ok(list) => {
-                                if list.is_empty() {
-                                    (true, "[DEPENDENCIES] No direct dependencies detected in project manifest.".to_string())
-                                } else {
-                                    let mut out = format!("[PROJECT DEPENDENCIES (Total: {})]\n\n", list.len());
-                                    for dep in &list {
-                                        let badge = if dep.is_dev { " (dev)" } else { "" };
-                                        out.push_str(&format!("  - {}: {}{}\n", dep.name, dep.version, badge));
-                                    }
-                                    (true, out)
+                    "list" => match self.deps.list_dependencies(&self.workspace_root) {
+                        Ok(list) => {
+                            if list.is_empty() {
+                                (true, "[DEPENDENCIES] No direct dependencies detected in project manifest.".to_string())
+                            } else {
+                                let mut out =
+                                    format!("[PROJECT DEPENDENCIES (Total: {})]\n\n", list.len());
+                                for dep in &list {
+                                    let badge = if dep.is_dev { " (dev)" } else { "" };
+                                    out.push_str(&format!(
+                                        "  - {}: {}{}\n",
+                                        dep.name, dep.version, badge
+                                    ));
                                 }
+                                (true, out)
                             }
-                            Err(e) => (false, e),
                         }
-                    }
+                        Err(e) => (false, e),
+                    },
                     "add" => {
                         if package.is_empty() {
                             (false, "Package name required for 'add' action.".to_string())
                         } else {
-                            match self.deps.add_dependency(&self.workspace_root, package, version, is_dev) {
-                                Ok(out) => (true, format!("[DEPENDENCY ADDED] {}\n{}", package, out)),
-                                Err(e) => (false, format!("Failed to add dependency '{}': {}", package, e)),
+                            match self.deps.add_dependency(
+                                &self.workspace_root,
+                                package,
+                                version,
+                                is_dev,
+                            ) {
+                                Ok(out) => {
+                                    (true, format!("[DEPENDENCY ADDED] {}\n{}", package, out))
+                                }
+                                Err(e) => (
+                                    false,
+                                    format!("Failed to add dependency '{}': {}", package, e),
+                                ),
                             }
                         }
                     }
                     "remove" => {
                         if package.is_empty() {
-                            (false, "Package name required for 'remove' action.".to_string())
+                            (
+                                false,
+                                "Package name required for 'remove' action.".to_string(),
+                            )
                         } else {
                             match self.deps.remove_dependency(&self.workspace_root, package) {
-                                Ok(out) => (true, format!("[DEPENDENCY REMOVED] {}\n{}", package, out)),
-                                Err(e) => (false, format!("Failed to remove dependency '{}': {}", package, e)),
+                                Ok(out) => {
+                                    (true, format!("[DEPENDENCY REMOVED] {}\n{}", package, out))
+                                }
+                                Err(e) => (
+                                    false,
+                                    format!("Failed to remove dependency '{}': {}", package, e),
+                                ),
                             }
                         }
                     }
-                    "audit" => {
-                        match self.deps.audit_dependencies(&self.workspace_root) {
-                            Ok(out) => (true, format!("[DEPENDENCY AUDIT]\n{}", out)),
-                            Err(e) => (false, format!("Audit error: {}", e)),
-                        }
-                    }
-                    _ => (false, format!("Unknown dependency action: '{}'. Use list, add, remove, or audit.", action)),
+                    "audit" => match self.deps.audit_dependencies(&self.workspace_root) {
+                        Ok(out) => (true, format!("[DEPENDENCY AUDIT]\n{}", out)),
+                        Err(e) => (false, format!("Audit error: {}", e)),
+                    },
+                    _ => (
+                        false,
+                        format!(
+                            "Unknown dependency action: '{}'. Use list, add, remove, or audit.",
+                            action
+                        ),
+                    ),
                 }
             }
             "manage_containers" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("status");
                 let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("");
-                let lines = args.get("lines").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(30);
+                let lines = args
+                    .get("lines")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(30);
 
                 match action {
-                    "status" => {
-                        match self.containers.check_status() {
-                            Ok(s) => (true, format!("[CONTAINER STATUS] {}", s)),
-                            Err(e) => (false, format!("[CONTAINER STATUS ERROR] {}", e)),
-                        }
-                    }
-                    "list" => {
-                        match self.containers.list_containers(true) {
-                            Ok(list) => {
-                                if list.is_empty() {
-                                    (true, "[CONTAINERS] Zero active or stopped containers found.".to_string())
-                                } else {
-                                    let mut out = format!("[CONTAINERS (Total: {})]\n\n", list.len());
-                                    for c in &list {
-                                        out.push_str(&format!("  - [{}] {} | Image: {} | State: {} | Ports: {}\n", c.id, c.name, c.image, c.state, c.ports));
-                                    }
-                                    (true, out)
+                    "status" => match self.containers.check_status() {
+                        Ok(s) => (true, format!("[CONTAINER STATUS] {}", s)),
+                        Err(e) => (false, format!("[CONTAINER STATUS ERROR] {}", e)),
+                    },
+                    "list" => match self.containers.list_containers(true) {
+                        Ok(list) => {
+                            if list.is_empty() {
+                                (
+                                    true,
+                                    "[CONTAINERS] Zero active or stopped containers found."
+                                        .to_string(),
+                                )
+                            } else {
+                                let mut out = format!("[CONTAINERS (Total: {})]\n\n", list.len());
+                                for c in &list {
+                                    out.push_str(&format!(
+                                        "  - [{}] {} | Image: {} | State: {} | Ports: {}\n",
+                                        c.id, c.name, c.image, c.state, c.ports
+                                    ));
                                 }
+                                (true, out)
                             }
-                            Err(e) => (false, format!("Failed to list containers: {}", e)),
                         }
-                    }
+                        Err(e) => (false, format!("Failed to list containers: {}", e)),
+                    },
                     "logs" => {
                         if target.is_empty() {
-                            (false, "Target container ID or name required for 'logs'.".to_string())
+                            (
+                                false,
+                                "Target container ID or name required for 'logs'.".to_string(),
+                            )
                         } else {
                             match self.containers.get_logs(target, lines) {
-                                Ok(l) => (true, format!("[CONTAINER LOGS: {} (Last {} lines)]\n\n{}", target, lines, l)),
-                                Err(e) => (false, format!("Failed to get logs for '{}': {}", target, e)),
+                                Ok(l) => (
+                                    true,
+                                    format!(
+                                        "[CONTAINER LOGS: {} (Last {} lines)]\n\n{}",
+                                        target, lines, l
+                                    ),
+                                ),
+                                Err(e) => {
+                                    (false, format!("Failed to get logs for '{}': {}", target, e))
+                                }
                             }
                         }
                     }
                     "inspect" => {
                         if target.is_empty() {
-                            (false, "Target container ID or name required for 'inspect'.".to_string())
+                            (
+                                false,
+                                "Target container ID or name required for 'inspect'.".to_string(),
+                            )
                         } else {
                             match self.containers.inspect_container(target) {
-                                Ok(info) => (true, format!("[CONTAINER INSPECT: {}]\n{}", target, info)),
+                                Ok(info) => {
+                                    (true, format!("[CONTAINER INSPECT: {}]\n{}", target, info))
+                                }
                                 Err(e) => (false, format!("Inspect failed: {}", e)),
                             }
                         }
                     }
-                    "compose_up" => {
-                        match self.containers.compose_up(&self.workspace_root) {
-                            Ok(out) => (true, format!("[COMPOSE UP]\n{}", out)),
-                            Err(e) => (false, format!("Compose up failed: {}", e)),
-                        }
-                    }
-                    "compose_down" => {
-                        match self.containers.compose_down(&self.workspace_root) {
-                            Ok(out) => (true, format!("[COMPOSE DOWN]\n{}", out)),
-                            Err(e) => (false, format!("Compose down failed: {}", e)),
-                        }
-                    }
+                    "compose_up" => match self.containers.compose_up(&self.workspace_root) {
+                        Ok(out) => (true, format!("[COMPOSE UP]\n{}", out)),
+                        Err(e) => (false, format!("Compose up failed: {}", e)),
+                    },
+                    "compose_down" => match self.containers.compose_down(&self.workspace_root) {
+                        Ok(out) => (true, format!("[COMPOSE DOWN]\n{}", out)),
+                        Err(e) => (false, format!("Compose down failed: {}", e)),
+                    },
                     "stop" => {
                         if target.is_empty() {
                             (false, "Target container required for 'stop'.".to_string())
                         } else {
                             match self.containers.stop_container(target) {
-                                Ok(out) => (true, format!("[CONTAINER STOPPED: {}]\n{}", target, out)),
+                                Ok(out) => {
+                                    (true, format!("[CONTAINER STOPPED: {}]\n{}", target, out))
+                                }
                                 Err(e) => (false, format!("Stop failed: {}", e)),
                             }
                         }
                     }
                     "restart" => {
                         if target.is_empty() {
-                            (false, "Target container required for 'restart'.".to_string())
+                            (
+                                false,
+                                "Target container required for 'restart'.".to_string(),
+                            )
                         } else {
                             match self.containers.restart_container(target) {
-                                Ok(out) => (true, format!("[CONTAINER RESTARTED: {}]\n{}", target, out)),
+                                Ok(out) => {
+                                    (true, format!("[CONTAINER RESTARTED: {}]\n{}", target, out))
+                                }
                                 Err(e) => (false, format!("Restart failed: {}", e)),
                             }
                         }
@@ -777,7 +946,8 @@ impl ToolRegistry {
                 }
             }
             "extract_symbols" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .or_else(|| args.get("file"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
@@ -788,10 +958,14 @@ impl ToolRegistry {
                         if list.is_empty() {
                             (true, format!("[SYMBOLS: {}] No symbols recognized.", path))
                         } else {
-                            let mut out = format!("[SYMBOLS: {} (Total: {})]\n\n", path, list.len());
+                            let mut out =
+                                format!("[SYMBOLS: {} (Total: {})]\n\n", path, list.len());
                             for s in &list {
                                 let pub_badge = if s.is_public { "pub " } else { "" };
-                                out.push_str(&format!("  L{:4} | {:9} | {}{}\n", s.line_number, s.kind, pub_badge, s.name));
+                                out.push_str(&format!(
+                                    "  L{:4} | {:9} | {}{}\n",
+                                    s.line_number, s.kind, pub_badge, s.name
+                                ));
                             }
                             (true, out)
                         }
@@ -802,15 +976,31 @@ impl ToolRegistry {
             "find_symbols" => {
                 let name_to_find = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if name_to_find.is_empty() {
-                    (false, "Symbol name required for 'find_symbols'.".to_string())
+                    (
+                        false,
+                        "Symbol name required for 'find_symbols'.".to_string(),
+                    )
                 } else {
                     let list = self.symbols.find_symbol_definitions(name_to_find);
                     if list.is_empty() {
-                        (true, format!("[SYMBOL SEARCH] No definitions found for '{}'.", name_to_find))
+                        (
+                            true,
+                            format!(
+                                "[SYMBOL SEARCH] No definitions found for '{}'.",
+                                name_to_find
+                            ),
+                        )
                     } else {
-                        let mut out = format!("[SYMBOL SEARCH: '{}' (Matches: {})]\n\n", name_to_find, list.len());
+                        let mut out = format!(
+                            "[SYMBOL SEARCH: '{}' (Matches: {})]\n\n",
+                            name_to_find,
+                            list.len()
+                        );
                         for s in &list {
-                            out.push_str(&format!("  - {} (Line {}): {}\n", s.file_path, s.line_number, s.signature));
+                            out.push_str(&format!(
+                                "  - {} (Line {}): {}\n",
+                                s.file_path, s.line_number, s.signature
+                            ));
                         }
                         (true, out)
                     }
@@ -824,12 +1014,27 @@ impl ToolRegistry {
                 match self.symbols.rename_symbol(old_name, new_name, path_filter) {
                     Ok(modified) => {
                         if modified.is_empty() {
-                            (true, format!("[RENAME] Symbol '{}' not found in any matched source files.", old_name))
+                            (
+                                true,
+                                format!(
+                                    "[RENAME] Symbol '{}' not found in any matched source files.",
+                                    old_name
+                                ),
+                            )
                         } else {
                             let total_occ: usize = modified.iter().map(|(_, c)| *c).sum();
-                            let mut out = format!("[RENAME SUCCESS: '{}' -> '{}' ({} replacements in {} files)]\n\n", old_name, new_name, total_occ, modified.len());
+                            let mut out = format!(
+                                "[RENAME SUCCESS: '{}' -> '{}' ({} replacements in {} files)]\n\n",
+                                old_name,
+                                new_name,
+                                total_occ,
+                                modified.len()
+                            );
                             for (file, count) in &modified {
-                                out.push_str(&format!("  - {}: {} occurrences replaced\n", file, count));
+                                out.push_str(&format!(
+                                    "  - {}: {} occurrences replaced\n",
+                                    file, count
+                                ));
                             }
                             (true, out)
                         }
@@ -838,13 +1043,20 @@ impl ToolRegistry {
                 }
             }
             "scaffold_test" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .or_else(|| args.get("file"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let write_to_file = args.get("write_to_file").and_then(|v| v.as_bool()).unwrap_or(false);
+                let write_to_file = args
+                    .get("write_to_file")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
-                match crate::agent::tester::SelfHealingVerifier::scaffold_test(&self.workspace_root, path) {
+                match crate::agent::tester::SelfHealingVerifier::scaffold_test(
+                    &self.workspace_root,
+                    path,
+                ) {
                     Ok((test_file, code)) => {
                         if write_to_file {
                             let target_p = self.workspace_root.join(&test_file);
@@ -853,28 +1065,51 @@ impl ToolRegistry {
                             }
                             if target_p.exists() && test_file == path {
                                 // Append for Rust inline test module
-                                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&target_p) {
+                                if let Ok(mut f) =
+                                    std::fs::OpenOptions::new().append(true).open(&target_p)
+                                {
                                     use std::io::Write;
                                     let _ = writeln!(f, "{}", code);
-                                    (true, format!("[TEST SCAFFOLD APPENDED] Added unit test module to {}", test_file))
+                                    (
+                                        true,
+                                        format!(
+                                            "[TEST SCAFFOLD APPENDED] Added unit test module to {}",
+                                            test_file
+                                        ),
+                                    )
                                 } else {
                                     (false, format!("Failed to append to {}", test_file))
                                 }
                             } else {
                                 match std::fs::write(&target_p, &code) {
-                                    Ok(_) => (true, format!("[TEST SCAFFOLD CREATED] Wrote test suite to {}", test_file)),
+                                    Ok(_) => (
+                                        true,
+                                        format!(
+                                            "[TEST SCAFFOLD CREATED] Wrote test suite to {}",
+                                            test_file
+                                        ),
+                                    ),
                                     Err(e) => (false, format!("Failed to write test file: {}", e)),
                                 }
                             }
                         } else {
-                            (true, format!("[TEST SCAFFOLD FOR: {} (Target: {})]\n\n{}", path, test_file, code))
+                            (
+                                true,
+                                format!(
+                                    "[TEST SCAFFOLD FOR: {} (Target: {})]\n\n{}",
+                                    path, test_file, code
+                                ),
+                            )
                         }
                     }
                     Err(e) => (false, e),
                 }
             }
             "manage_sandbox" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("status");
                 let name = args.get("name").and_then(|v| v.as_str());
 
                 match action {

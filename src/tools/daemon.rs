@@ -68,7 +68,9 @@ impl DaemonRegistry {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn daemon: {}", e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn daemon: {}", e))?;
         let pid = child.id();
 
         let id = {
@@ -91,7 +93,7 @@ impl DaemonRegistry {
             let logs_clone = Arc::clone(&logs);
             thread::spawn(move || {
                 let reader = BufReader::new(out);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     let mut buffer = logs_clone.lock().unwrap();
                     buffer.push(format!("[stdout] {}", line));
                     if buffer.len() > MAX_BUFFER_LINES {
@@ -106,7 +108,7 @@ impl DaemonRegistry {
             let logs_clone = Arc::clone(&logs);
             thread::spawn(move || {
                 let reader = BufReader::new(err);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     let mut buffer = logs_clone.lock().unwrap();
                     buffer.push(format!("[stderr] {}", line));
                     if buffer.len() > MAX_BUFFER_LINES {
@@ -122,26 +124,24 @@ impl DaemonRegistry {
             let is_alive_clone = Arc::clone(&is_alive);
             let exit_code_clone = Arc::clone(&exit_code);
 
-            thread::spawn(move || {
-                loop {
-                    thread::sleep(std::time::Duration::from_millis(500));
-                    let mut maybe_child = child_cell_clone.lock().unwrap();
-                    if let Some(child_ref) = maybe_child.as_mut() {
-                        match child_ref.try_wait() {
-                            Ok(Some(status)) => {
-                                *is_alive_clone.lock().unwrap() = false;
-                                *exit_code_clone.lock().unwrap() = status.code();
-                                break;
-                            }
-                            Ok(None) => {}
-                            Err(_) => {
-                                *is_alive_clone.lock().unwrap() = false;
-                                break;
-                            }
+            thread::spawn(move || loop {
+                thread::sleep(std::time::Duration::from_millis(500));
+                let mut maybe_child = child_cell_clone.lock().unwrap();
+                if let Some(child_ref) = maybe_child.as_mut() {
+                    match child_ref.try_wait() {
+                        Ok(Some(status)) => {
+                            *is_alive_clone.lock().unwrap() = false;
+                            *exit_code_clone.lock().unwrap() = status.code();
+                            break;
                         }
-                    } else {
-                        break;
+                        Ok(None) => {}
+                        Err(_) => {
+                            *is_alive_clone.lock().unwrap() = false;
+                            break;
+                        }
                     }
+                } else {
+                    break;
                 }
             });
         }
@@ -240,7 +240,11 @@ mod tests {
     #[test]
     fn test_daemon_lifecycle() {
         let reg = DaemonRegistry::new();
-        let cmd = if cfg!(target_os = "windows") { "Start-Sleep -Seconds 1; echo done" } else { "sleep 1 && echo done" };
+        let cmd = if cfg!(target_os = "windows") {
+            "Start-Sleep -Seconds 1; echo done"
+        } else {
+            "sleep 1 && echo done"
+        };
         let job = reg.start_daemon(cmd, Path::new("."));
         assert!(job.is_ok());
 

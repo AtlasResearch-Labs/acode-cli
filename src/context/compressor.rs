@@ -1,7 +1,7 @@
 //! Atlas Daedalus — Trajectory Compressor
 
-use serde::{Deserialize, Serialize};
 use crate::providers::types::ToolCall;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -47,7 +47,10 @@ impl TrajectoryCompressor {
     }
 
     pub fn compress(&self, messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
-        let total_tokens: usize = messages.iter().map(|m| Self::estimate_tokens(&m.content)).sum();
+        let total_tokens: usize = messages
+            .iter()
+            .map(|m| Self::estimate_tokens(&m.content))
+            .sum();
         if total_tokens <= self.max_tokens || messages.len() <= 8 {
             return messages;
         }
@@ -76,10 +79,8 @@ impl TrajectoryCompressor {
             if msg.role == "tool" && msg.content.chars().count() > 600 {
                 let head = Self::safe_truncate(&msg.content, 300);
                 let tail = Self::safe_slice_end(&msg.content, 150);
-                let truncated = format!(
-                    "{}\n... [TRUNCATED FOR CONTEXT BUDGET] ...\n{}",
-                    head, tail
-                );
+                let truncated =
+                    format!("{}\n... [TRUNCATED FOR CONTEXT BUDGET] ...\n{}", head, tail);
                 compressed.push(ChatMessage {
                     role: msg.role.clone(),
                     content: truncated,

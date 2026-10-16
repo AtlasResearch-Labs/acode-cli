@@ -110,21 +110,37 @@ impl TaskGraph {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.tasks.iter().all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
+        self.tasks
+            .iter()
+            .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
     }
 
     /// Renders a high-density ASCII progress summary for terminal display
     pub fn render_progress(&self) -> String {
         let mut out = format!("GOAL: {}\n", self.goal);
-        let completed = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Completed)).count();
-        out.push_str(&format!("Progress: {}/{} steps completed\n\n", completed, self.tasks.len()));
+        let completed = self
+            .tasks
+            .iter()
+            .filter(|t| matches!(t.status, TaskStatus::Completed))
+            .count();
+        out.push_str(&format!(
+            "Progress: {}/{} steps completed\n\n",
+            completed,
+            self.tasks.len()
+        ));
 
         for task in &self.tasks {
             let detail = match &task.status {
                 TaskStatus::Failed(r) => format!(" (Error: {})", r),
                 _ => String::new(),
             };
-            out.push_str(&format!("  {} {}. {}{}\n", task.status.badge(), task.id, task.title, detail));
+            out.push_str(&format!(
+                "  {} {}. {}{}\n",
+                task.status.badge(),
+                task.id,
+                task.title,
+                detail
+            ));
         }
 
         out
@@ -157,9 +173,15 @@ mod tests {
         graph.fail_current("Missing OpenSSL headers");
         assert!(matches!(graph.tasks[1].status, TaskStatus::Failed(_)));
 
-        graph.insert_repair_step("Install OpenSSL or switch to rustls", "Compiler error: missing openssl");
+        graph.insert_repair_step(
+            "Install OpenSSL or switch to rustls",
+            "Compiler error: missing openssl",
+        );
         assert_eq!(graph.tasks.len(), 4);
         assert_eq!(graph.current_index, 2);
-        assert_eq!(graph.tasks[2].title, "[REPAIR] Install OpenSSL or switch to rustls");
+        assert_eq!(
+            graph.tasks[2].title,
+            "[REPAIR] Install OpenSSL or switch to rustls"
+        );
     }
 }

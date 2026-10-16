@@ -18,15 +18,18 @@ impl DaedalusREPL {
 
     async fn render_prompt(&self) -> String {
         let metrics = crate::telemetry::host::HostInspector::collect();
-        let folder_name = self.orchestrator.workspace_root
+        let folder_name = self
+            .orchestrator
+            .workspace_root
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or_else(|| {
-                self.orchestrator.workspace_root.to_str().unwrap_or("root")
-            });
+            .unwrap_or_else(|| self.orchestrator.workspace_root.to_str().unwrap_or("root"));
 
         let status = self.orchestrator.tools.git.get_status().await;
-        let git_info = if !status.branch.is_empty() && status.branch != "detached" && status.branch != "unknown" {
+        let git_info = if !status.branch.is_empty()
+            && status.branch != "detached"
+            && status.branch != "unknown"
+        {
             let dirty = if status.clean { "" } else { "*" };
             format!(" ({}{})", status.branch, dirty)
         } else {
@@ -62,14 +65,22 @@ impl DaedalusREPL {
             let daedalus_dir = std::path::PathBuf::from(home).join(".daedalus");
             let _ = std::fs::create_dir_all(&daedalus_dir);
             let history_path = daedalus_dir.join("history.txt");
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&history_path) {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&history_path)
+            {
                 let _ = writeln!(file, "{}", line);
             }
         }
     }
 
     pub async fn start(&mut self) {
-        let root = self.orchestrator.workspace_root.to_string_lossy().to_string();
+        let root = self
+            .orchestrator
+            .workspace_root
+            .to_string_lossy()
+            .to_string();
         let model = self.orchestrator.provider.config.model.clone();
         let provider = self.orchestrator.provider.config.provider.clone();
 
@@ -94,27 +105,44 @@ impl DaedalusREPL {
 
                     Self::append_history(trimmed);
 
-                    if trimmed.starts_with('/') {
-                        if SlashCommandHandler::handle(trimmed, &mut self.orchestrator).await {
-                            continue;
-                        }
+                    if trimmed.starts_with('/')
+                        && SlashCommandHandler::handle(trimmed, &mut self.orchestrator).await
+                    {
+                        continue;
                     }
 
                     // Direct non-blocking background daemon spawn with '!&' prefix
-                    if trimmed.starts_with("!&") {
-                        let shell_cmd = trimmed[2..].trim();
+                    if let Some(stripped) = trimmed.strip_prefix("!&") {
+                        let shell_cmd = stripped.trim();
                         if !shell_cmd.is_empty() {
-                            let gate_args = serde_json::json!({ "command": shell_cmd, "cmd": shell_cmd });
+                            let gate_args =
+                                serde_json::json!({ "command": shell_cmd, "cmd": shell_cmd });
                             if !self.orchestrator.check_gate("start_daemon", &gate_args) {
                                 continue;
                             }
                             println!();
-                            match self.orchestrator.tools.daemons.start_daemon(shell_cmd, &self.orchestrator.workspace_root) {
+                            match self
+                                .orchestrator
+                                .tools
+                                .daemons
+                                .start_daemon(shell_cmd, &self.orchestrator.workspace_root)
+                            {
                                 Ok(job) => {
-                                    println!("{}[OK] Started background daemon [{}]: {}{}\n", TuiRenderer::GREEN, job.id, shell_cmd, TuiRenderer::RESET);
+                                    println!(
+                                        "{}[OK] Started background daemon [{}]: {}{}\n",
+                                        TuiRenderer::GREEN,
+                                        job.id,
+                                        shell_cmd,
+                                        TuiRenderer::RESET
+                                    );
                                 }
                                 Err(e) => {
-                                    println!("{}[FAIL] Failed to spawn background daemon: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET);
+                                    println!(
+                                        "{}[FAIL] Failed to spawn background daemon: {}{}\n",
+                                        TuiRenderer::RED,
+                                        e,
+                                        TuiRenderer::RESET
+                                    );
                                 }
                             }
                             continue;
@@ -122,15 +150,21 @@ impl DaedalusREPL {
                     }
 
                     // Direct shell command with '!' prefix
-                    if trimmed.starts_with('!') {
-                        let shell_cmd = trimmed[1..].trim();
+                    if let Some(stripped) = trimmed.strip_prefix('!') {
+                        let shell_cmd = stripped.trim();
                         if !shell_cmd.is_empty() {
-                            let gate_args = serde_json::json!({ "command": shell_cmd, "cmd": shell_cmd });
+                            let gate_args =
+                                serde_json::json!({ "command": shell_cmd, "cmd": shell_cmd });
                             if !self.orchestrator.check_gate("run_command", &gate_args) {
                                 continue;
                             }
                             println!();
-                            let res = self.orchestrator.tools.shell.run_command(shell_cmd, None).await;
+                            let res = self
+                                .orchestrator
+                                .tools
+                                .shell
+                                .run_command(shell_cmd, None)
+                                .await;
                             if !res.stdout.is_empty() {
                                 print!("{}", res.stdout);
                             }
@@ -151,49 +185,73 @@ impl DaedalusREPL {
                         trimmed
                     };
 
-                    println!("{}[ACODE] Dispatching to {} ({})...{}\n", TuiRenderer::DIM, self.orchestrator.provider.config.model, self.orchestrator.provider.config.provider, TuiRenderer::RESET);
+                    println!(
+                        "{}[ACODE] Dispatching to {} ({})...{}\n",
+                        TuiRenderer::DIM,
+                        self.orchestrator.provider.config.model,
+                        self.orchestrator.provider.config.provider,
+                        TuiRenderer::RESET
+                    );
                     let mut streamed_any = false;
-                    let res = self.orchestrator.run_task(effective_prompt, |event| match event {
-                        AgentEvent::Thinking(s) => {
-                            if streamed_any {
-                                println!();
-                                streamed_any = false;
+                    let res = self
+                        .orchestrator
+                        .run_task(effective_prompt, |event| match event {
+                            AgentEvent::Thinking(s) => {
+                                if streamed_any {
+                                    println!();
+                                    streamed_any = false;
+                                }
+                                TuiRenderer::print_thinking(s);
                             }
-                            TuiRenderer::print_thinking(s);
-                        }
-                        AgentEvent::Token(s) => {
-                            print!("{}", s);
-                            let _ = io::stdout().flush();
-                            streamed_any = true;
-                        }
-                        AgentEvent::ToolStart { name, args } => {
-                            if streamed_any {
-                                println!();
-                                streamed_any = false;
+                            AgentEvent::Token(s) => {
+                                print!("{}", s);
+                                let _ = io::stdout().flush();
+                                streamed_any = true;
                             }
-                            TuiRenderer::print_tool_start(name, args);
-                        }
-                        AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
-                        AgentEvent::TestResult { command, passed, output } => TuiRenderer::print_test_result(command, passed, output),
-                        AgentEvent::Done { files_modified, tools_called, .. } => {
-                            if streamed_any {
-                                println!();
-                                streamed_any = false;
+                            AgentEvent::ToolStart { name, args } => {
+                                if streamed_any {
+                                    println!();
+                                    streamed_any = false;
+                                }
+                                TuiRenderer::print_tool_start(name, args);
                             }
-                            if !files_modified.is_empty() {
-                                TuiRenderer::print_success(&format!("Modified: {}", files_modified.join(", ")));
-                            } else if tools_called > 0 {
-                                TuiRenderer::print_success("Task executed successfully.");
+                            AgentEvent::ToolEnd {
+                                name,
+                                success,
+                                output,
+                            } => TuiRenderer::print_tool_end(name, success, output),
+                            AgentEvent::TestResult {
+                                command,
+                                passed,
+                                output,
+                            } => TuiRenderer::print_test_result(command, passed, output),
+                            AgentEvent::Done {
+                                files_modified,
+                                tools_called,
+                                ..
+                            } => {
+                                if streamed_any {
+                                    println!();
+                                    streamed_any = false;
+                                }
+                                if !files_modified.is_empty() {
+                                    TuiRenderer::print_success(&format!(
+                                        "Modified: {}",
+                                        files_modified.join(", ")
+                                    ));
+                                } else if tools_called > 0 {
+                                    TuiRenderer::print_success("Task executed successfully.");
+                                }
                             }
-                        }
-                        AgentEvent::Error(err) => {
-                            if streamed_any {
-                                println!();
-                                streamed_any = false;
+                            AgentEvent::Error(err) => {
+                                if streamed_any {
+                                    println!();
+                                    streamed_any = false;
+                                }
+                                TuiRenderer::print_error(err);
                             }
-                            TuiRenderer::print_error(err);
-                        }
-                    }).await;
+                        })
+                        .await;
 
                     match res {
                         Ok(summary) => {

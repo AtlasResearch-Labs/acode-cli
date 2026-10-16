@@ -3,9 +3,9 @@
 //! from overflowing the LLM context window. Outputs exceeding max_chars (default: 12,000)
 //! are written to a unique local spill file and replaced with a preview containing head + tail snippets.
 
+use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
-use chrono::Utc;
 
 pub const DEFAULT_MAX_CHARS: usize = 12_000;
 pub const DEFAULT_HEAD_CHARS: usize = 600;
@@ -47,7 +47,13 @@ impl SpillGuard {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let safe_source = source
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .take(24)
             .collect::<String>();
         let file_name = format!("{}_{}_{:04x}.log", safe_source, timestamp, rand_suffix());
@@ -105,14 +111,8 @@ mod tests {
 
     #[test]
     fn test_no_spill_small_text() {
-        let (out, spilled, path) = SpillGuard::spill_with_limits(
-            Path::new("."),
-            "test",
-            "small text",
-            100,
-            10,
-            10,
-        );
+        let (out, spilled, path) =
+            SpillGuard::spill_with_limits(Path::new("."), "test", "small text", 100, 10, 10);
         assert!(!spilled);
         assert_eq!(out, "small text");
         assert!(path.is_none());
@@ -121,14 +121,8 @@ mod tests {
     #[test]
     fn test_spill_large_text() {
         let large = "A".repeat(500);
-        let (out, spilled, path) = SpillGuard::spill_with_limits(
-            Path::new("target"),
-            "test_large",
-            &large,
-            50,
-            10,
-            10,
-        );
+        let (out, spilled, path) =
+            SpillGuard::spill_with_limits(Path::new("target"), "test_large", &large, 50, 10, 10);
         assert!(spilled);
         assert!(path.is_some());
         assert!(out.contains("SPILL OVERFLOW DETECTED"));

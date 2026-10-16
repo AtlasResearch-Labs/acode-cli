@@ -1,10 +1,10 @@
 //! Atlas Daedalus — Universal Web Intelligence Engine
 //! Multi-source search, Reddit .json, arXiv research, YouTube transcripts, and Markdown extraction.
 
-use std::time::Duration;
-use reqwest::Client;
 use regex::Regex;
+use reqwest::Client;
 use serde_json::Value;
+use std::time::Duration;
 
 pub struct WebTools {
     client: Client,
@@ -25,11 +25,21 @@ impl WebTools {
     /// Multi-source web search with ThreatShield sanitization
     pub async fn web_search(&self, query: &str, max_results: usize) -> Result<String, String> {
         let raw = self.web_search_raw(query, max_results).await?;
-        let (clean, alerts) = crate::security::threat_shield::ThreatShield::sanitize_web_content(&raw);
+        let (clean, alerts) =
+            crate::security::threat_shield::ThreatShield::sanitize_web_content(&raw);
         if alerts.is_empty() {
             Ok(clean)
         } else {
-            let alert_notes = alerts.iter().map(|a| format!("[THREAT_SHIELD INTERCEPT: {}] {}", a.threat_id, a.description)).collect::<Vec<_>>().join("\n");
+            let alert_notes = alerts
+                .iter()
+                .map(|a| {
+                    format!(
+                        "[THREAT_SHIELD INTERCEPT: {}] {}",
+                        a.threat_id, a.description
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             Ok(format!("{}\n\n{}", alert_notes, clean))
         }
     }
@@ -40,11 +50,23 @@ impl WebTools {
             return Err("Search query cannot be empty.".to_string());
         }
 
-        let limit = if max_results == 0 || max_results > 10 { 5 } else { max_results };
+        let limit = if max_results == 0 || max_results > 10 {
+            5
+        } else {
+            max_results
+        };
 
         // 1. If query is HackerNews-specific, query Algolia HN API directly
-        if trimmed.to_lowercase().contains("hackernews") || trimmed.to_lowercase().contains("hacker news") || trimmed.starts_with("hn:") {
-            let clean_q = trimmed.replace("hackernews", "").replace("hacker news", "").replace("hn:", "").trim().to_string();
+        if trimmed.to_lowercase().contains("hackernews")
+            || trimmed.to_lowercase().contains("hacker news")
+            || trimmed.starts_with("hn:")
+        {
+            let clean_q = trimmed
+                .replace("hackernews", "")
+                .replace("hacker news", "")
+                .replace("hn:", "")
+                .trim()
+                .to_string();
             if let Ok(hn_res) = self.search_hackernews(&clean_q, limit).await {
                 if !hn_res.is_empty() {
                     return Ok(hn_res);
@@ -54,9 +76,14 @@ impl WebTools {
 
         // 2. DuckDuckGo HTML standard endpoint via POST
         let params = [("q", trimmed)];
-        let resp = self.client.post("https://html.duckduckgo.com/html/")
+        let resp = self
+            .client
+            .post("https://html.duckduckgo.com/html/")
             .form(&params)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .send()
@@ -69,7 +96,13 @@ impl WebTools {
                 if !results.is_empty() {
                     let mut out = format!("[WEB SEARCH RESULTS for \"{}\"]\n\n", trimmed);
                     for (i, (title, url, snippet)) in results.iter().enumerate() {
-                        out.push_str(&format!("{}. [{}]({})\n   {}\n\n", i + 1, title, url, snippet));
+                        out.push_str(&format!(
+                            "{}. [{}]({})\n   {}\n\n",
+                            i + 1,
+                            title,
+                            url,
+                            snippet
+                        ));
                     }
                     return Ok(out.trim().to_string());
                 }
@@ -77,7 +110,10 @@ impl WebTools {
         }
 
         // 4. DuckDuckGo Instant Answer API fallback
-        let api_url = format!("https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1", Self::url_encode(trimmed));
+        let api_url = format!(
+            "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+            Self::url_encode(trimmed)
+        );
         if let Ok(api_resp) = self.client.get(&api_url).send().await {
             if let Ok(json) = api_resp.json::<Value>().await {
                 let mut out = format!("[WEB SEARCH RESULTS for \"{}\"]\n\n", trimmed);
@@ -86,7 +122,10 @@ impl WebTools {
                 if let Some(heading) = json.get("Heading").and_then(|h| h.as_str()) {
                     if let Some(abs) = json.get("Abstract").and_then(|a| a.as_str()) {
                         if !abs.is_empty() {
-                            let url = json.get("AbstractURL").and_then(|u| u.as_str()).unwrap_or("");
+                            let url = json
+                                .get("AbstractURL")
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("");
                             out.push_str(&format!("1. [{}]({})\n   {}\n\n", heading, url, abs));
                             found = true;
                         }
@@ -114,28 +153,59 @@ impl WebTools {
 
     /// HackerNews Algolia search
     async fn search_hackernews(&self, query: &str, limit: usize) -> Result<String, String> {
-        let url = format!("https://hn.algolia.com/api/v1/search?query={}&tags=story&hitsPerPage={}", Self::url_encode(query), limit);
-        let resp = self.client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let url = format!(
+            "https://hn.algolia.com/api/v1/search?query={}&tags=story&hitsPerPage={}",
+            Self::url_encode(query),
+            limit
+        );
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         let json: Value = resp.json().await.map_err(|e| e.to_string())?;
 
-        let hits = json.get("hits").and_then(|h| h.as_array()).ok_or("No hits found")?;
+        let hits = json
+            .get("hits")
+            .and_then(|h| h.as_array())
+            .ok_or("No hits found")?;
         if hits.is_empty() {
             return Ok(String::new());
         }
 
         let mut out = format!("[HACKER NEWS SEARCH RESULTS for \"{}\"]\n\n", query);
         for (i, hit) in hits.iter().enumerate() {
-            let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("Untitled");
-            let target_url = hit.get("url").and_then(|u| u.as_str()).unwrap_or_else(|| {
-                hit.get("story_url").and_then(|u| u.as_str()).unwrap_or("")
-            });
+            let title = hit
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("Untitled");
+            let target_url = hit
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or_else(|| hit.get("story_url").and_then(|u| u.as_str()).unwrap_or(""));
             let object_id = hit.get("objectID").and_then(|id| id.as_str()).unwrap_or("");
             let points = hit.get("points").and_then(|p| p.as_u64()).unwrap_or(0);
-            let comments = hit.get("num_comments").and_then(|c| c.as_u64()).unwrap_or(0);
+            let comments = hit
+                .get("num_comments")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
             let hn_url = format!("https://news.ycombinator.com/item?id={}", object_id);
 
-            let display_url = if target_url.is_empty() { &hn_url } else { target_url };
-            out.push_str(&format!("{}. [{}]({})\n   Score: {} points | {} comments | Discussion: {}\n\n", i + 1, title, display_url, points, comments, hn_url));
+            let display_url = if target_url.is_empty() {
+                &hn_url
+            } else {
+                target_url
+            };
+            out.push_str(&format!(
+                "{}. [{}]({})\n   Score: {} points | {} comments | Discussion: {}\n\n",
+                i + 1,
+                title,
+                display_url,
+                points,
+                comments,
+                hn_url
+            ));
         }
 
         Ok(out.trim().to_string())
@@ -144,11 +214,21 @@ impl WebTools {
     /// Universal Web Fetcher with ThreatShield sanitization
     pub async fn web_fetch(&self, raw_url: &str, max_chars: usize) -> Result<String, String> {
         let raw = self.web_fetch_raw(raw_url, max_chars).await?;
-        let (clean, alerts) = crate::security::threat_shield::ThreatShield::sanitize_web_content(&raw);
+        let (clean, alerts) =
+            crate::security::threat_shield::ThreatShield::sanitize_web_content(&raw);
         if alerts.is_empty() {
             Ok(clean)
         } else {
-            let alert_notes = alerts.iter().map(|a| format!("[THREAT_SHIELD INTERCEPT: {}] {}", a.threat_id, a.description)).collect::<Vec<_>>().join("\n");
+            let alert_notes = alerts
+                .iter()
+                .map(|a| {
+                    format!(
+                        "[THREAT_SHIELD INTERCEPT: {}] {}",
+                        a.threat_id, a.description
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             Ok(format!("{}\n\n{}", alert_notes, clean))
         }
     }
@@ -189,8 +269,13 @@ impl WebTools {
         }
 
         // 4. Standard Direct Fetch with Browser Identity
-        match self.client.get(url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        match self
+            .client
+            .get(url)
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Sec-Fetch-Dest", "document")
             .header("Sec-Fetch-Mode", "navigate")
@@ -205,7 +290,11 @@ impl WebTools {
                     let cleaned = Self::sanitize_html_to_markdown(&html);
                     if cleaned.len() > 150 {
                         let truncated = if cleaned.len() > max_len {
-                            format!("{}\n\n... [Content truncated at {} characters]", &cleaned[..max_len], max_len)
+                            format!(
+                                "{}\n\n... [Content truncated at {} characters]",
+                                &cleaned[..max_len],
+                                max_len
+                            )
                         } else {
                             cleaned
                         };
@@ -221,7 +310,9 @@ impl WebTools {
 
         // 5. Universal Jina Reader Fallback (Bypasses Cloudflare & Client-Side JS)
         let jina_url = format!("https://r.jina.ai/{}", url);
-        let jina_resp = self.client.get(&jina_url)
+        let jina_resp = self
+            .client
+            .get(&jina_url)
             .header("Accept", "text/plain")
             .send()
             .await;
@@ -231,7 +322,11 @@ impl WebTools {
                 let markdown = jr.text().await.unwrap_or_default();
                 if !markdown.trim().is_empty() {
                     let truncated = if markdown.len() > max_len {
-                        format!("{}\n\n... [Content truncated at {} characters]", &markdown[..max_len], max_len)
+                        format!(
+                            "{}\n\n... [Content truncated at {} characters]",
+                            &markdown[..max_len],
+                            max_len
+                        )
                     } else {
                         markdown
                     };
@@ -248,8 +343,13 @@ impl WebTools {
         let clean_url = url.split('?').next().unwrap_or(url).trim_end_matches('/');
         let json_url = format!("{}.json?limit=8", clean_url);
 
-        let resp = self.client.get(&json_url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Daedalus/1.1.0")
+        let resp = self
+            .client
+            .get(&json_url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Daedalus/1.1.0",
+            )
             .send()
             .await
             .map_err(|e| e.to_string())?;
@@ -259,16 +359,30 @@ impl WebTools {
         let mut out = String::new();
 
         // Parse Post Details
-        if let Some(post_listing) = json.get(0).and_then(|j| j.get("data")).and_then(|d| d.get("children")).and_then(|c| c.as_array()) {
+        if let Some(post_listing) = json
+            .get(0)
+            .and_then(|j| j.get("data"))
+            .and_then(|d| d.get("children"))
+            .and_then(|c| c.as_array())
+        {
             if let Some(post) = post_listing.first().and_then(|p| p.get("data")) {
                 let title = post.get("title").and_then(|t| t.as_str()).unwrap_or("");
-                let author = post.get("author").and_then(|a| a.as_str()).unwrap_or("unknown");
-                let sub = post.get("subreddit_name_prefixed").and_then(|s| s.as_str()).unwrap_or("");
+                let author = post
+                    .get("author")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("unknown");
+                let sub = post
+                    .get("subreddit_name_prefixed")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
                 let score = post.get("score").and_then(|s| s.as_i64()).unwrap_or(0);
                 let selftext = post.get("selftext").and_then(|s| s.as_str()).unwrap_or("");
 
                 out.push_str(&format!("# {} ({})\n", title, sub));
-                out.push_str(&format!("Author: u/{} | Score: {} upvotes\n\n", author, score));
+                out.push_str(&format!(
+                    "Author: u/{} | Score: {} upvotes\n\n",
+                    author, score
+                ));
                 if !selftext.is_empty() {
                     out.push_str(&format!("{}\n\n", selftext));
                 }
@@ -277,15 +391,29 @@ impl WebTools {
         }
 
         // Parse Comments
-        if let Some(comment_listing) = json.get(1).and_then(|j| j.get("data")).and_then(|d| d.get("children")).and_then(|c| c.as_array()) {
+        if let Some(comment_listing) = json
+            .get(1)
+            .and_then(|j| j.get("data"))
+            .and_then(|d| d.get("children"))
+            .and_then(|c| c.as_array())
+        {
             for (i, c) in comment_listing.iter().take(6).enumerate() {
                 if let Some(comment) = c.get("data") {
-                    let author = comment.get("author").and_then(|a| a.as_str()).unwrap_or("[deleted]");
+                    let author = comment
+                        .get("author")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("[deleted]");
                     let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
                     let score = comment.get("score").and_then(|s| s.as_i64()).unwrap_or(0);
 
                     if !body.is_empty() && author != "[deleted]" {
-                        out.push_str(&format!("**Comment #{} by u/{} ({} pts):**\n{}\n\n", i + 1, author, score, body));
+                        out.push_str(&format!(
+                            "**Comment #{} by u/{} ({} pts):**\n{}\n\n",
+                            i + 1,
+                            author,
+                            score,
+                            body
+                        ));
                     }
                 }
             }
@@ -308,7 +436,12 @@ impl WebTools {
         };
 
         let api_url = format!("https://export.arxiv.org/api/query?id_list={}", id);
-        let resp = self.client.get(&api_url).send().await.map_err(|e| e.to_string())?;
+        let resp = self
+            .client
+            .get(&api_url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         let xml = resp.text().await.unwrap_or_default();
 
         let entry_xml = if let Some(pos) = xml.find("<entry>") {
@@ -317,13 +450,22 @@ impl WebTools {
             &xml
         };
 
-        let title = Self::extract_xml_tag(entry_xml, "title").unwrap_or_else(|| "Unknown Title".to_string());
-        let summary = Self::extract_xml_tag(entry_xml, "summary").unwrap_or_else(|| "No abstract available".to_string());
+        let title = Self::extract_xml_tag(entry_xml, "title")
+            .unwrap_or_else(|| "Unknown Title".to_string());
+        let summary = Self::extract_xml_tag(entry_xml, "summary")
+            .unwrap_or_else(|| "No abstract available".to_string());
         let published = Self::extract_xml_tag(entry_xml, "published").unwrap_or_default();
 
         let re_author = Regex::new(r"<author>\s*<name>([^<]+)</name>").unwrap();
-        let authors: Vec<String> = re_author.captures_iter(entry_xml).map(|c| c[1].trim().to_string()).collect();
-        let author_line = if authors.is_empty() { String::new() } else { format!("Authors: {}\n", authors.join(", ")) };
+        let authors: Vec<String> = re_author
+            .captures_iter(entry_xml)
+            .map(|c| c[1].trim().to_string())
+            .collect();
+        let author_line = if authors.is_empty() {
+            String::new()
+        } else {
+            format!("Authors: {}\n", authors.join(", "))
+        };
 
         let clean_title = title.replace('\n', " ").trim().to_string();
         let clean_summary = summary.replace('\n', " ").trim().to_string();
@@ -343,45 +485,68 @@ impl WebTools {
         };
 
         // Try direct timedtext track
-        let timedtext_url = format!("https://www.youtube.com/api/timedtext?v={}&lang=en", video_id);
+        let timedtext_url = format!(
+            "https://www.youtube.com/api/timedtext?v={}&lang=en",
+            video_id
+        );
         if let Ok(resp) = self.client.get(&timedtext_url).send().await {
             if resp.status().is_success() {
                 let xml = resp.text().await.unwrap_or_default();
                 let clean_text = Self::clean_youtube_transcript_xml(&xml);
                 if !clean_text.is_empty() {
-                    return Ok(format!("[YOUTUBE SPOKEN TRANSCRIPT: {}]\n\n{}", video_id, clean_text));
+                    return Ok(format!(
+                        "[YOUTUBE SPOKEN TRANSCRIPT: {}]\n\n{}",
+                        video_id, clean_text
+                    ));
                 }
             }
         }
 
         // Fallback: Jina Reader handles YouTube URLs and extracts transcripts automatically
-        let jina_yt = format!("https://r.jina.ai/https://www.youtube.com/watch?v={}", video_id);
+        let jina_yt = format!(
+            "https://r.jina.ai/https://www.youtube.com/watch?v={}",
+            video_id
+        );
         if let Ok(resp) = self.client.get(&jina_yt).send().await {
             if resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
                 if !text.is_empty() {
-                    return Ok(format!("[YOUTUBE VIDEO TRANSCRIPT / SUMMARY: {}]\n\n{}", video_id, text));
+                    return Ok(format!(
+                        "[YOUTUBE VIDEO TRANSCRIPT / SUMMARY: {}]\n\n{}",
+                        video_id, text
+                    ));
                 }
             }
         }
 
-        Err(format!("Could not extract captions or transcript for YouTube video: {}", video_id))
+        Err(format!(
+            "Could not extract captions or transcript for YouTube video: {}",
+            video_id
+        ))
     }
 
     // Helper: Parse DuckDuckGo Lite HTML results
     fn parse_ddg_lite_html(html: &str, limit: usize) -> Vec<(String, String, String)> {
         let mut results = Vec::new();
-        let re_link = Regex::new(r#"<a class=['"]result-link['"]\s+href=['"]([^'"]+)['"]>([^<]+)</a>"#).unwrap();
+        let re_link =
+            Regex::new(r#"<a class=['"]result-link['"]\s+href=['"]([^'"]+)['"]>([^<]+)</a>"#)
+                .unwrap();
         let re_snippet = Regex::new(r#"<td class=['"]result-snippet['"]>([^<]+)</td>"#).unwrap();
 
-        let links: Vec<(String, String)> = re_link.captures_iter(html).map(|c| {
-            let raw_url = c[1].to_string();
-            let clean_url = Self::unwrap_ddg_redirect(&raw_url);
-            let title = c[2].trim().to_string();
-            (clean_url, title)
-        }).collect();
+        let links: Vec<(String, String)> = re_link
+            .captures_iter(html)
+            .map(|c| {
+                let raw_url = c[1].to_string();
+                let clean_url = Self::unwrap_ddg_redirect(&raw_url);
+                let title = c[2].trim().to_string();
+                (clean_url, title)
+            })
+            .collect();
 
-        let snippets: Vec<String> = re_snippet.captures_iter(html).map(|c| c[1].trim().to_string()).collect();
+        let snippets: Vec<String> = re_snippet
+            .captures_iter(html)
+            .map(|c| c[1].trim().to_string())
+            .collect();
 
         for (i, (url, title)) in links.into_iter().take(limit).enumerate() {
             let snip = snippets.get(i).cloned().unwrap_or_default();
@@ -395,18 +560,24 @@ impl WebTools {
     fn parse_ddg_html(html: &str, limit: usize) -> Vec<(String, String, String)> {
         let mut results = Vec::new();
         let re_link = Regex::new(r#"<a[^>]*class=['"][^'"]*result__a[^'"]*['"][^>]*href=['"]([^'"]+)['"][^>]*>([\s\S]*?)</a>"#).unwrap();
-        let re_snippet = Regex::new(r#"<a[^>]*class=['"][^'"]*result__snippet[^'"]*['"][^>]*>([\s\S]*?)</a>"#).unwrap();
+        let re_snippet =
+            Regex::new(r#"<a[^>]*class=['"][^'"]*result__snippet[^'"]*['"][^>]*>([\s\S]*?)</a>"#)
+                .unwrap();
 
-        let links: Vec<(String, String)> = re_link.captures_iter(html).map(|c| {
-            let raw_url = c[1].to_string();
-            let clean_url = Self::unwrap_ddg_redirect(&raw_url);
-            let title = Self::strip_html_tags(&c[2]).trim().to_string();
-            (clean_url, title)
-        }).collect();
+        let links: Vec<(String, String)> = re_link
+            .captures_iter(html)
+            .map(|c| {
+                let raw_url = c[1].to_string();
+                let clean_url = Self::unwrap_ddg_redirect(&raw_url);
+                let title = Self::strip_html_tags(&c[2]).trim().to_string();
+                (clean_url, title)
+            })
+            .collect();
 
-        let snippets: Vec<String> = re_snippet.captures_iter(html).map(|c| {
-            Self::strip_html_tags(&c[1]).trim().to_string()
-        }).collect();
+        let snippets: Vec<String> = re_snippet
+            .captures_iter(html)
+            .map(|c| Self::strip_html_tags(&c[1]).trim().to_string())
+            .collect();
 
         for (i, (url, title)) in links.into_iter().take(limit).enumerate() {
             let snip = snippets.get(i).cloned().unwrap_or_default();
@@ -489,18 +660,31 @@ impl WebTools {
         }
 
         // Convert headings
-        if let Ok(re) = Regex::new(r"(?i)<h1[^>]*>([\s\S]*?)</h1>") { s = re.replace_all(&s, "\n# $1\n").to_string(); }
-        if let Ok(re) = Regex::new(r"(?i)<h2[^>]*>([\s\S]*?)</h2>") { s = re.replace_all(&s, "\n## $1\n").to_string(); }
-        if let Ok(re) = Regex::new(r"(?i)<h3[^>]*>([\s\S]*?)</h3>") { s = re.replace_all(&s, "\n### $1\n").to_string(); }
-        if let Ok(re) = Regex::new(r"(?i)<li[^>]*>([\s\S]*?)</li>") { s = re.replace_all(&s, "\n* $1").to_string(); }
-        if let Ok(re) = Regex::new(r"(?i)<p[^>]*>([\s\S]*?)</p>") { s = re.replace_all(&s, "\n$1\n").to_string(); }
-        if let Ok(re) = Regex::new(r"(?i)<br\s*/?>") { s = re.replace_all(&s, "\n").to_string(); }
+        if let Ok(re) = Regex::new(r"(?i)<h1[^>]*>([\s\S]*?)</h1>") {
+            s = re.replace_all(&s, "\n# $1\n").to_string();
+        }
+        if let Ok(re) = Regex::new(r"(?i)<h2[^>]*>([\s\S]*?)</h2>") {
+            s = re.replace_all(&s, "\n## $1\n").to_string();
+        }
+        if let Ok(re) = Regex::new(r"(?i)<h3[^>]*>([\s\S]*?)</h3>") {
+            s = re.replace_all(&s, "\n### $1\n").to_string();
+        }
+        if let Ok(re) = Regex::new(r"(?i)<li[^>]*>([\s\S]*?)</li>") {
+            s = re.replace_all(&s, "\n* $1").to_string();
+        }
+        if let Ok(re) = Regex::new(r"(?i)<p[^>]*>([\s\S]*?)</p>") {
+            s = re.replace_all(&s, "\n$1\n").to_string();
+        }
+        if let Ok(re) = Regex::new(r"(?i)<br\s*/?>") {
+            s = re.replace_all(&s, "\n").to_string();
+        }
 
         // Strip remaining HTML tags
         s = Self::strip_html_tags(&s);
 
         // Decode common HTML entities
-        s = s.replace("&amp;", "&")
+        s = s
+            .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
@@ -526,7 +710,9 @@ impl WebTools {
     fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
         let pattern = format!(r"(?s)<{}>([\s\S]*?)</{}>", tag, tag);
         Regex::new(&pattern).ok().and_then(|re| {
-            re.captures(xml).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+            re.captures(xml)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
         })
     }
 
@@ -535,7 +721,10 @@ impl WebTools {
         let mut out = Vec::new();
         for cap in re.captures_iter(xml) {
             let line = Self::strip_html_tags(&cap[1]);
-            let decoded = line.replace("&amp;", "&").replace("&#39;", "'").replace("&quot;", "\"");
+            let decoded = line
+                .replace("&amp;", "&")
+                .replace("&#39;", "'")
+                .replace("&quot;", "\"");
             if !decoded.trim().is_empty() {
                 out.push(decoded.trim().to_string());
             }
@@ -575,4 +764,3 @@ mod tests {
         assert!(md.contains("Learn Rust & enjoy."));
     }
 }
-

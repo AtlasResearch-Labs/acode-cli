@@ -2,10 +2,10 @@
 //! Parses symbols (functions, structs, traits, classes, interfaces, enums) across Rust,
 //! TypeScript/JavaScript, Python, and Go for structural navigation and precise cross-file renaming.
 
-use std::fs;
-use std::path::{Path, PathBuf};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolKind {
@@ -65,7 +65,8 @@ impl SymbolEngine {
             .map_err(|e| format!("Failed to read file '{}': {}", file_path.display(), e))?;
 
         let ext = file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        let rel_path = file_path.strip_prefix(&self.workspace_root)
+        let rel_path = file_path
+            .strip_prefix(&self.workspace_root)
             .unwrap_or(file_path)
             .to_string_lossy()
             .to_string();
@@ -91,7 +92,11 @@ impl SymbolEngine {
             }
         }
 
-        matches.sort_by(|a, b| a.file_path.cmp(&b.file_path).then(a.line_number.cmp(&b.line_number)));
+        matches.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then(a.line_number.cmp(&b.line_number))
+        });
         matches.dedup_by(|a, b| a.file_path == b.file_path && a.line_number == b.line_number);
         matches
     }
@@ -122,9 +127,12 @@ impl SymbolEngine {
                         count += 1;
                     }
 
-                    let replaced = re.replace_all(&content, regex::NoExpand(new_name)).to_string();
-                    if let Ok(_) = fs::write(&file, replaced) {
-                        let rel = file.strip_prefix(&self.workspace_root)
+                    let replaced = re
+                        .replace_all(&content, regex::NoExpand(new_name))
+                        .to_string();
+                    if fs::write(&file, replaced).is_ok() {
+                        let rel = file
+                            .strip_prefix(&self.workspace_root)
                             .unwrap_or(&file)
                             .to_string_lossy()
                             .to_string();
@@ -137,13 +145,23 @@ impl SymbolEngine {
         Ok(modified)
     }
 
-    fn walk_and_collect_symbols(&self, dir: &Path, symbol_name: &str, results: &mut Vec<SymbolRecord>) {
+    fn walk_and_collect_symbols(
+        &self,
+        dir: &Path,
+        symbol_name: &str,
+        results: &mut Vec<SymbolRecord>,
+    ) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if let Ok(ft) = entry.file_type() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') || name == "target" || name == "node_modules" || name == "vendor" || name == "dist" {
+                    if name.starts_with('.')
+                        || name == "target"
+                        || name == "node_modules"
+                        || name == "vendor"
+                        || name == "dist"
+                    {
                         continue;
                     }
                     if ft.is_dir() {
@@ -173,17 +191,28 @@ impl SymbolEngine {
             for entry in entries.flatten() {
                 let p = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') || name == "target" || name == "node_modules" || name == "vendor" || name == "dist" {
+                if name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || name == "vendor"
+                    || name == "dist"
+                {
                     continue;
                 }
                 if let Ok(ft) = entry.file_type() {
                     if ft.is_dir() {
                         self.walk_source_files(&p, filter, list);
                     } else if ft.is_file() {
-                        let is_src = match p.extension().and_then(|s| s.to_str()) {
-                            Some("rs") | Some("ts") | Some("tsx") | Some("js") | Some("jsx") | Some("py") | Some("go") => true,
-                            _ => false,
-                        };
+                        let is_src = matches!(
+                            p.extension().and_then(|s| s.to_str()),
+                            Some("rs")
+                                | Some("ts")
+                                | Some("tsx")
+                                | Some("js")
+                                | Some("jsx")
+                                | Some("py")
+                                | Some("go")
+                        );
                         if is_src {
                             if let Some(f) = filter {
                                 if p.to_string_lossy().contains(f) {
@@ -227,7 +256,11 @@ impl SymbolEngine {
             } else if let Some(pos) = trimmed.find("struct ") {
                 if pos == 0 || (is_pub && pos == 4) {
                     let sub = &trimmed[pos + 7..];
-                    let name = sub.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("").trim();
+                    let name = sub
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
                     if !name.is_empty() && is_valid_ident(name) {
                         symbols.push(SymbolRecord {
                             name: name.to_string(),
@@ -242,7 +275,11 @@ impl SymbolEngine {
             } else if let Some(pos) = trimmed.find("enum ") {
                 if pos == 0 || (is_pub && pos == 4) {
                     let sub = &trimmed[pos + 5..];
-                    let name = sub.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("").trim();
+                    let name = sub
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
                     if !name.is_empty() && is_valid_ident(name) {
                         symbols.push(SymbolRecord {
                             name: name.to_string(),
@@ -257,7 +294,11 @@ impl SymbolEngine {
             } else if let Some(pos) = trimmed.find("trait ") {
                 if pos == 0 || (is_pub && pos == 4) {
                     let sub = &trimmed[pos + 6..];
-                    let name = sub.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("").trim();
+                    let name = sub
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
                     if !name.is_empty() && is_valid_ident(name) {
                         symbols.push(SymbolRecord {
                             name: name.to_string(),
@@ -300,7 +341,11 @@ impl SymbolEngine {
                 }
             } else if let Some(pos) = trimmed.find("class ") {
                 let sub = &trimmed[pos + 6..];
-                let name = sub.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("").trim();
+                let name = sub
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
                 if !name.is_empty() && is_valid_ident(name) {
                     symbols.push(SymbolRecord {
                         name: name.to_string(),
@@ -313,7 +358,11 @@ impl SymbolEngine {
                 }
             } else if let Some(pos) = trimmed.find("interface ") {
                 let sub = &trimmed[pos + 10..];
-                let name = sub.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("").trim();
+                let name = sub
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
                 if !name.is_empty() && is_valid_ident(name) {
                     symbols.push(SymbolRecord {
                         name: name.to_string(),
@@ -355,7 +404,11 @@ impl SymbolEngine {
             let line_number = idx + 1;
 
             if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
-                let sub = if trimmed.starts_with("async def ") { &trimmed[10..] } else { &trimmed[4..] };
+                let sub = if let Some(stripped) = trimmed.strip_prefix("async def ") {
+                    stripped
+                } else {
+                    &trimmed[4..]
+                };
                 if let Some(paren) = sub.find('(') {
                     let name = sub[..paren].trim();
                     if !name.is_empty() && is_valid_ident(name) {
@@ -370,9 +423,12 @@ impl SymbolEngine {
                         });
                     }
                 }
-            } else if trimmed.starts_with("class ") {
-                let sub = &trimmed[6..];
-                let name = sub.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("").trim();
+            } else if let Some(sub) = trimmed.strip_prefix("class ") {
+                let name = sub
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
                 if !name.is_empty() && is_valid_ident(name) {
                     let is_pub = !name.starts_with('_');
                     symbols.push(SymbolRecord {
@@ -397,8 +453,7 @@ impl SymbolEngine {
             let trimmed = line.trim();
             let line_number = idx + 1;
 
-            if trimmed.starts_with("func ") {
-                let sub = &trimmed[5..];
+            if let Some(sub) = trimmed.strip_prefix("func ") {
                 let after_receiver = if sub.starts_with('(') {
                     if let Some(close) = sub.find(')') {
                         sub[close + 1..].trim()
@@ -412,7 +467,11 @@ impl SymbolEngine {
                 if let Some(paren) = after_receiver.find('(') {
                     let name = after_receiver[..paren].trim();
                     if !name.is_empty() && is_valid_ident(name) {
-                        let is_pub = name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                        let is_pub = name
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false);
                         symbols.push(SymbolRecord {
                             name: name.to_string(),
                             kind: SymbolKind::Function.as_str().to_string(),
@@ -427,7 +486,11 @@ impl SymbolEngine {
                 let sub = &trimmed[5..];
                 let name = sub.split_whitespace().next().unwrap_or("").trim();
                 if !name.is_empty() && is_valid_ident(name) {
-                    let is_pub = name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                    let is_pub = name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false);
                     symbols.push(SymbolRecord {
                         name: name.to_string(),
                         kind: SymbolKind::Struct.as_str().to_string(),

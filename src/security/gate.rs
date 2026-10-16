@@ -1,10 +1,10 @@
 //! Atlas Daedalus — Permission Gate & Interactive Challenge
 //! (C) 2026 Atlas Research Labs — MIT License
 
+use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use serde_json::Value;
 
 use crate::cli::tui::TuiRenderer;
 use crate::security::policy::{PermissionDecision, RiskLevel, SecurityMode, SecurityPolicy};
@@ -46,7 +46,9 @@ impl PermissionGate {
     pub fn untrust_path(&mut self, path: &Path) -> bool {
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let initial_len = self.config.trusted_paths.len();
-        self.config.trusted_paths.retain(|p| p != &canon && p != path);
+        self.config
+            .trusted_paths
+            .retain(|p| p != &canon && p != path);
         let removed = self.config.trusted_paths.len() < initial_len;
         if removed {
             SecurityStorage::save(&self.config);
@@ -70,21 +72,24 @@ impl PermissionGate {
         }
 
         // Terminal execution tools: run_command, run_tests, start_daemon, or MCP command tools
-        if tool_name == "run_command" || tool_name == "run_tests" || tool_name == "start_daemon" || (tool_name.starts_with("mcp__") && (args.get("command").is_some() || args.get("cmd").is_some())) {
+        if tool_name == "run_command"
+            || tool_name == "run_tests"
+            || tool_name == "start_daemon"
+            || (tool_name.starts_with("mcp__")
+                && (args.get("command").is_some() || args.get("cmd").is_some()))
+        {
             let cmd = match tool_name {
-                "run_tests" => {
-                    args.get("command")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("cargo test")
-                        .trim()
-                }
-                _ => {
-                    args.get("command")
-                        .or_else(|| args.get("cmd"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim()
-                }
+                "run_tests" => args
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("cargo test")
+                    .trim(),
+                _ => args
+                    .get("command")
+                    .or_else(|| args.get("cmd"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim(),
             };
             if cmd.is_empty() {
                 return PermissionDecision::Allow;
@@ -110,11 +115,13 @@ impl PermissionGate {
             }
 
             // Check if every individual sub-command is in trusted commands
-            let all_trusted = !sub_cmds.is_empty() && sub_cmds.iter().all(|sub| {
-                self.config.trusted_commands.iter().any(|tc| {
-                    sub == tc || sub.starts_with(&format!("{} ", tc))
-                })
-            });
+            let all_trusted = !sub_cmds.is_empty()
+                && sub_cmds.iter().all(|sub| {
+                    self.config
+                        .trusted_commands
+                        .iter()
+                        .any(|tc| sub == tc || sub.starts_with(&format!("{} ", tc)))
+                });
 
             if all_trusted {
                 return PermissionDecision::Allow;
@@ -122,7 +129,8 @@ impl PermissionGate {
 
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires explicit confirmation for all terminal commands".to_string(),
+                    reason: "Strict mode requires explicit confirmation for all terminal commands"
+                        .to_string(),
                     details: format!("Command: {}", cmd),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -145,7 +153,8 @@ impl PermissionGate {
         if tool_name == "beacon_tunnel" {
             let port = args.get("port").and_then(|v| v.as_u64()).unwrap_or(0);
             return PermissionDecision::Prompt {
-                reason: "Exposing local network port to the public internet via HTTPS tunnel".to_string(),
+                reason: "Exposing local network port to the public internet via HTTPS tunnel"
+                    .to_string(),
                 details: format!("Local Port: {}", port),
                 risk_level: RiskLevel::High,
                 suggest_trust_path: None,
@@ -154,18 +163,27 @@ impl PermissionGate {
 
         // Container management tools
         if tool_name == "manage_containers" {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("status");
             let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("");
             if matches!(action, "stop" | "compose_down") {
                 return PermissionDecision::Prompt {
-                    reason: "Terminating container workloads or tearing down docker-compose services".to_string(),
+                    reason:
+                        "Terminating container workloads or tearing down docker-compose services"
+                            .to_string(),
                     details: format!("Action: {}, Target: {}", action, target),
                     risk_level: RiskLevel::High,
                     suggest_trust_path: None,
                 };
-            } else if matches!(action, "compose_up" | "restart") && self.config.mode == SecurityMode::Strict {
+            } else if matches!(action, "compose_up" | "restart")
+                && self.config.mode == SecurityMode::Strict
+            {
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires confirmation for container lifecycle state changes".to_string(),
+                    reason:
+                        "Strict mode requires confirmation for container lifecycle state changes"
+                            .to_string(),
                     details: format!("Action: {}, Target: {}", action, target),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -175,11 +193,16 @@ impl PermissionGate {
 
         // Dependency management tools
         if tool_name == "manage_dependencies" {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("list");
             let package = args.get("package").and_then(|v| v.as_str()).unwrap_or("");
             if matches!(action, "add" | "remove") && self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires confirmation before modifying project dependencies".to_string(),
+                    reason:
+                        "Strict mode requires confirmation before modifying project dependencies"
+                            .to_string(),
                     details: format!("Action: {}, Package: {}", action, package),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -189,34 +212,29 @@ impl PermissionGate {
 
         // Tools operating on filesystem paths
         let raw_path = match tool_name {
-            "view_file" | "patch_file" | "write_file" | "extract_symbols" | "scaffold_test" => {
-                args.get("path")
-                    .or_else(|| args.get("file"))
-                    .or_else(|| args.get("file_path"))
-                    .and_then(|v| v.as_str())
-            }
-            "list_dir" => {
-                args.get("path")
-                    .or_else(|| args.get("dir"))
-                    .and_then(|v| v.as_str())
-            }
-            "search_code" => {
-                args.get("dir")
-                    .or_else(|| args.get("path"))
-                    .and_then(|v| v.as_str())
-            }
-            "change_workspace" => {
-                args.get("path")
-                    .or_else(|| args.get("dir"))
-                    .and_then(|v| v.as_str())
-            }
-            _ if tool_name.starts_with("mcp__") => {
-                args.get("path")
-                    .or_else(|| args.get("file"))
-                    .or_else(|| args.get("file_path"))
-                    .or_else(|| args.get("dir"))
-                    .and_then(|v| v.as_str())
-            }
+            "view_file" | "patch_file" | "write_file" | "extract_symbols" | "scaffold_test" => args
+                .get("path")
+                .or_else(|| args.get("file"))
+                .or_else(|| args.get("file_path"))
+                .and_then(|v| v.as_str()),
+            "list_dir" => args
+                .get("path")
+                .or_else(|| args.get("dir"))
+                .and_then(|v| v.as_str()),
+            "search_code" => args
+                .get("dir")
+                .or_else(|| args.get("path"))
+                .and_then(|v| v.as_str()),
+            "change_workspace" => args
+                .get("path")
+                .or_else(|| args.get("dir"))
+                .and_then(|v| v.as_str()),
+            _ if tool_name.starts_with("mcp__") => args
+                .get("path")
+                .or_else(|| args.get("file"))
+                .or_else(|| args.get("file_path"))
+                .or_else(|| args.get("dir"))
+                .and_then(|v| v.as_str()),
             _ => None,
         };
 
@@ -234,7 +252,10 @@ impl PermissionGate {
             // Check sensitive file credentials
             if SecurityPolicy::is_sensitive_path(&normalized) {
                 if self.config.mode == SecurityMode::Strict {
-                    return PermissionDecision::Deny(format!("Strict mode prohibits access to sensitive credential file: {}", normalized.display()));
+                    return PermissionDecision::Deny(format!(
+                        "Strict mode prohibits access to sensitive credential file: {}",
+                        normalized.display()
+                    ));
                 }
                 return PermissionDecision::Prompt {
                     reason: "Accessing sensitive host credential or identity file".to_string(),
@@ -245,16 +266,27 @@ impl PermissionGate {
             }
 
             // Check if granted in current session
-            if self.session_allowed_paths.iter().any(|sp| normalized.starts_with(sp)) {
+            if self
+                .session_allowed_paths
+                .iter()
+                .any(|sp| normalized.starts_with(sp))
+            {
                 return PermissionDecision::Allow;
             }
 
-            let within_trusted = SecurityPolicy::is_within_trusted_boundaries(&normalized, workspace_root, &self.config.trusted_paths);
+            let within_trusted = SecurityPolicy::is_within_trusted_boundaries(
+                &normalized,
+                workspace_root,
+                &self.config.trusted_paths,
+            );
 
             if within_trusted {
-                if self.config.mode == SecurityMode::Strict && (tool_name == "write_file" || tool_name == "patch_file") {
+                if self.config.mode == SecurityMode::Strict
+                    && (tool_name == "write_file" || tool_name == "patch_file")
+                {
                     return PermissionDecision::Prompt {
-                        reason: "Strict mode requires human approval for all file mutations".to_string(),
+                        reason: "Strict mode requires human approval for all file mutations"
+                            .to_string(),
                         details: format!("Target file: {}", normalized.display()),
                         risk_level: RiskLevel::Low,
                         suggest_trust_path: None,
@@ -278,7 +310,8 @@ impl PermissionGate {
             };
 
             return PermissionDecision::Prompt {
-                reason: "Operation targets directory or drive outside designated workspace".to_string(),
+                reason: "Operation targets directory or drive outside designated workspace"
+                    .to_string(),
                 details: format!("Path: {}", normalized.display()),
                 risk_level: RiskLevel::Medium,
                 suggest_trust_path: suggest_folder,
@@ -287,7 +320,10 @@ impl PermissionGate {
 
         // Memory updates: Protect persistent instructions against prompt injection
         if tool_name == "update_memory" {
-            let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("project");
+            let scope = args
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("project");
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
                     reason: "Strict mode requires explicit confirmation before modifying persistent memory".to_string(),
@@ -298,8 +334,10 @@ impl PermissionGate {
             }
             if scope == "user" {
                 return PermissionDecision::Prompt {
-                    reason: "Modifying global user preferences profile (~/.daedalus/USER.md)".to_string(),
-                    details: "Global memory modifications persist across all workspaces".to_string(),
+                    reason: "Modifying global user preferences profile (~/.daedalus/USER.md)"
+                        .to_string(),
+                    details: "Global memory modifications persist across all workspaces"
+                        .to_string(),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
                 };
@@ -312,7 +350,8 @@ impl PermissionGate {
             if self.config.mode == SecurityMode::Strict {
                 let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires confirmation for outbound HTTP requests".to_string(),
+                    reason: "Strict mode requires confirmation for outbound HTTP requests"
+                        .to_string(),
                     details: format!("Target URL: {}", url),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -327,7 +366,9 @@ impl PermissionGate {
                 let old = args.get("old_name").and_then(|v| v.as_str()).unwrap_or("");
                 let new = args.get("new_name").and_then(|v| v.as_str()).unwrap_or("");
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires confirmation before cross-file symbol refactoring".to_string(),
+                    reason:
+                        "Strict mode requires confirmation before cross-file symbol refactoring"
+                            .to_string(),
                     details: format!("Rename symbol '{}' -> '{}'", old, new),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -340,7 +381,9 @@ impl PermissionGate {
         if tool_name == "spawn_swarm" || tool_name == "delegate_task" {
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires human approval before spawning autonomous subagents".to_string(),
+                    reason:
+                        "Strict mode requires human approval before spawning autonomous subagents"
+                            .to_string(),
                     details: format!("Subagent parameters: {}", args),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -353,7 +396,8 @@ impl PermissionGate {
         if tool_name == "manage_sandbox" || tool_name == "create_shadow_workspace" {
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires confirmation for shadow workspace git worktrees".to_string(),
+                    reason: "Strict mode requires confirmation for shadow workspace git worktrees"
+                        .to_string(),
                     details: format!("Sandbox action: {}", args),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -366,7 +410,8 @@ impl PermissionGate {
         if tool_name == "argus_audit" || tool_name == "run_argus_audit" {
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
-                    reason: "Strict mode requires confirmation for external Argus AST audit tool".to_string(),
+                    reason: "Strict mode requires confirmation for external Argus AST audit tool"
+                        .to_string(),
                     details: format!("Target: {}", args),
                     risk_level: RiskLevel::Low,
                     suggest_trust_path: None,
@@ -378,7 +423,8 @@ impl PermissionGate {
         if tool_name == "kill_daemon" && self.config.mode == SecurityMode::Strict {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
             return PermissionDecision::Prompt {
-                reason: "Strict mode requires confirmation to terminate background daemon".to_string(),
+                reason: "Strict mode requires confirmation to terminate background daemon"
+                    .to_string(),
                 details: format!("Daemon ID: {}", id),
                 risk_level: RiskLevel::Medium,
                 suggest_trust_path: None,
@@ -388,7 +434,10 @@ impl PermissionGate {
         if tool_name.starts_with("mcp__") {
             if self.config.mode == SecurityMode::Strict {
                 return PermissionDecision::Prompt {
-                    reason: format!("Strict mode requires human approval for external MCP tool '{}'", tool_name),
+                    reason: format!(
+                        "Strict mode requires human approval for external MCP tool '{}'",
+                        tool_name
+                    ),
                     details: format!("Arguments: {}", args),
                     risk_level: RiskLevel::Medium,
                     suggest_trust_path: None,
@@ -400,9 +449,17 @@ impl PermissionGate {
         // Safe read-only tools that do not mutate files, state, or network
         let is_safe_readonly = matches!(
             tool_name,
-            "view_file" | "list_dir" | "search_code" | "extract_symbols" | "find_symbols" |
-            "git_status" | "git_diff" | "list_workspaces" | "list_daemons" | "daemon_logs" |
-            "web_search"
+            "view_file"
+                | "list_dir"
+                | "search_code"
+                | "extract_symbols"
+                | "find_symbols"
+                | "git_status"
+                | "git_diff"
+                | "list_workspaces"
+                | "list_daemons"
+                | "daemon_logs"
+                | "web_search"
         );
 
         if is_safe_readonly {
@@ -411,11 +468,17 @@ impl PermissionGate {
 
         // Unknown or unregistered tools: Default-deny in Strict mode, Default-prompt in Sandboxed mode
         if self.config.mode == SecurityMode::Strict {
-            return PermissionDecision::Deny(format!("Strict mode prohibits unregistered tool '{}'", tool_name));
+            return PermissionDecision::Deny(format!(
+                "Strict mode prohibits unregistered tool '{}'",
+                tool_name
+            ));
         }
 
         PermissionDecision::Prompt {
-            reason: format!("Unrecognized tool '{}' requires human authorization", tool_name),
+            reason: format!(
+                "Unrecognized tool '{}' requires human authorization",
+                tool_name
+            ),
             details: format!("Arguments: {}", args),
             risk_level: RiskLevel::Medium,
             suggest_trust_path: None,
@@ -444,9 +507,24 @@ impl PermissionGate {
             risk,
             TuiRenderer::RESET
         );
-        println!("  Operation: {}{}{}", TuiRenderer::WHITE, tool_name, TuiRenderer::RESET);
-        println!("  Reason:    {}{}{}", TuiRenderer::DIM, reason, TuiRenderer::RESET);
-        println!("  Details:   {}{}{}\n", TuiRenderer::CYAN, details, TuiRenderer::RESET);
+        println!(
+            "  Operation: {}{}{}",
+            TuiRenderer::WHITE,
+            tool_name,
+            TuiRenderer::RESET
+        );
+        println!(
+            "  Reason:    {}{}{}",
+            TuiRenderer::DIM,
+            reason,
+            TuiRenderer::RESET
+        );
+        println!(
+            "  Details:   {}{}{}\n",
+            TuiRenderer::CYAN,
+            details,
+            TuiRenderer::RESET
+        );
 
         println!("Options:");
         println!("  [y] Allow Once");
@@ -480,7 +558,11 @@ impl PermissionGate {
                 return false;
             }
             Err(_) => {
-                println!("{}\n[FAIL] Failed to read user choice. Denying operation.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                println!(
+                    "{}\n[FAIL] Failed to read user choice. Denying operation.{}\n",
+                    TuiRenderer::RED,
+                    TuiRenderer::RESET
+                );
                 println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
                 return false;
             }
@@ -496,35 +578,60 @@ impl PermissionGate {
 
         let allowed = match effective_choice {
             "y" | "yes" => {
-                println!("{}[OK] Permission granted for single execution.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                println!(
+                    "{}[OK] Permission granted for single execution.{}\n",
+                    TuiRenderer::GREEN,
+                    TuiRenderer::RESET
+                );
                 true
             }
             "s" | "session" => {
                 if let Some(p) = suggest_path {
                     self.session_allowed_paths.insert(p.to_path_buf());
-                } else if tool_name == "run_command" || tool_name == "run_tests" || tool_name == "start_daemon" {
-                    let cmd_prefix = details.strip_prefix("Command: ")
+                } else if tool_name == "run_command"
+                    || tool_name == "run_tests"
+                    || tool_name == "start_daemon"
+                {
+                    let cmd_prefix = details
+                        .strip_prefix("Command: ")
                         .or_else(|| details.strip_prefix("Daemon command: "))
                         .unwrap_or(details)
                         .trim()
                         .to_string();
                     self.session_allowed_commands.insert(cmd_prefix);
                 }
-                println!("{}[OK] Permission granted for this entire session.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                println!(
+                    "{}[OK] Permission granted for this entire session.{}\n",
+                    TuiRenderer::GREEN,
+                    TuiRenderer::RESET
+                );
                 true
             }
             "t" | "trust" => {
                 if let Some(p) = suggest_path {
                     self.trust_path(p.to_path_buf());
-                    println!("{}[OK] Trusted path permanently: {}{}\n", TuiRenderer::GREEN, p.display(), TuiRenderer::RESET);
+                    println!(
+                        "{}[OK] Trusted path permanently: {}{}\n",
+                        TuiRenderer::GREEN,
+                        p.display(),
+                        TuiRenderer::RESET
+                    );
                     true
                 } else {
-                    println!("{}[OK] Permission granted for single execution.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                    println!(
+                        "{}[OK] Permission granted for single execution.{}\n",
+                        TuiRenderer::GREEN,
+                        TuiRenderer::RESET
+                    );
                     true
                 }
             }
             _ => {
-                println!("{}[DENIED] Operation aborted by security policy.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                println!(
+                    "{}[DENIED] Operation aborted by security policy.{}\n",
+                    TuiRenderer::RED,
+                    TuiRenderer::RESET
+                );
                 false
             }
         };
@@ -620,38 +727,75 @@ mod tests {
         let workspace = PathBuf::from("/workspace");
 
         // update_memory should prompt with High risk in Strict mode
-        let mem_decision = gate.evaluate("update_memory", &json!({ "scope": "project", "content": "note" }), &workspace);
+        let mem_decision = gate.evaluate(
+            "update_memory",
+            &json!({ "scope": "project", "content": "note" }),
+            &workspace,
+        );
         match mem_decision {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::High),
-            other => panic!("Expected High prompt for update_memory in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::High)
+            }
+            other => panic!(
+                "Expected High prompt for update_memory in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // web_fetch should prompt in Strict mode
-        let fetch_decision = gate.evaluate("web_fetch", &json!({ "url": "https://example.com" }), &workspace);
+        let fetch_decision = gate.evaluate(
+            "web_fetch",
+            &json!({ "url": "https://example.com" }),
+            &workspace,
+        );
         match fetch_decision {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected Prompt for web_fetch in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected Prompt for web_fetch in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // rename_symbol should prompt in Strict mode
-        let rename_decision = gate.evaluate("rename_symbol", &json!({ "old_name": "foo", "new_name": "bar" }), &workspace);
+        let rename_decision = gate.evaluate(
+            "rename_symbol",
+            &json!({ "old_name": "foo", "new_name": "bar" }),
+            &workspace,
+        );
         match rename_decision {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected Prompt for rename_symbol in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected Prompt for rename_symbol in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // spawn_swarm should prompt in Strict mode
-        let swarm_decision = gate.evaluate("spawn_swarm", &json!({ "goal": "refactor" }), &workspace);
+        let swarm_decision =
+            gate.evaluate("spawn_swarm", &json!({ "goal": "refactor" }), &workspace);
         match swarm_decision {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected Prompt for spawn_swarm in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected Prompt for spawn_swarm in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // run_argus_audit should prompt in Strict mode
-        let audit_decision = gate.evaluate("run_argus_audit", &json!({ "target": "." }), &workspace);
+        let audit_decision =
+            gate.evaluate("run_argus_audit", &json!({ "target": "." }), &workspace);
         match audit_decision {
             PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Low),
-            other => panic!("Expected Prompt for run_argus_audit in Strict mode, got {:?}", other),
+            other => panic!(
+                "Expected Prompt for run_argus_audit in Strict mode, got {:?}",
+                other
+            ),
         }
     }
 
@@ -665,15 +809,25 @@ mod tests {
         // In Strict mode: Unknown tool MUST Deny
         let strict_res = strict_gate.evaluate("unknown_third_party_tool", &args, &workspace);
         match strict_res {
-            PermissionDecision::Deny(reason) => assert!(reason.contains("Strict mode prohibits unregistered tool")),
-            other => panic!("Expected Deny for unknown tool in Strict mode, got {:?}", other),
+            PermissionDecision::Deny(reason) => {
+                assert!(reason.contains("Strict mode prohibits unregistered tool"))
+            }
+            other => panic!(
+                "Expected Deny for unknown tool in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // In Sandboxed mode: Unknown tool MUST Prompt
         let sandboxed_res = sandboxed_gate.evaluate("unknown_third_party_tool", &args, &workspace);
         match sandboxed_res {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected Prompt for unknown tool in Sandboxed mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected Prompt for unknown tool in Sandboxed mode, got {:?}",
+                other
+            ),
         }
     }
 
@@ -686,32 +840,52 @@ mod tests {
         let cmd_args = json!({ "command": "echo hello" });
         let cmd_res = gate.evaluate("run_command", &cmd_args, &workspace);
         match cmd_res {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected prompt for REPL direct shell in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected prompt for REPL direct shell in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // Direct REPL background daemon: !&command
         let daemon_args = json!({ "command": "python server.py" });
         let daemon_res = gate.evaluate("start_daemon", &daemon_args, &workspace);
         match daemon_res {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected prompt for REPL background daemon in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected prompt for REPL background daemon in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // Slash command /undo: git checkout -- .
         let undo_args = json!({ "command": "git checkout -- ." });
         let undo_res = gate.evaluate("run_command", &undo_args, &workspace);
         match undo_res {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
-            other => panic!("Expected prompt for /undo command in Strict mode, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Medium)
+            }
+            other => panic!(
+                "Expected prompt for /undo command in Strict mode, got {:?}",
+                other
+            ),
         }
 
         // Destructive / high-risk direct shortcut: !rm -rf /
         let danger_args = json!({ "command": "rm -rf /" });
         let danger_res = gate.evaluate("run_command", &danger_args, &workspace);
         match danger_res {
-            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Critical),
-            other => panic!("Expected Critical prompt for destructive shell shortcut, got {:?}", other),
+            PermissionDecision::Prompt { risk_level, .. } => {
+                assert_eq!(risk_level, RiskLevel::Critical)
+            }
+            other => panic!(
+                "Expected Critical prompt for destructive shell shortcut, got {:?}",
+                other
+            ),
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Atlas Daedalus — Pillar Integration Tools (Argus, Beacon, Orion, Pulse)
 
-use std::path::Path;
 use crate::tools::shell::ShellTools;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct PulseMetrics {
@@ -26,26 +26,51 @@ impl PillarTools {
 
         if res.success && !res.stdout.is_empty() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&res.stdout) {
-                let clean = json.get("issues").and_then(|i| i.as_array()).map(|a| a.is_empty()).unwrap_or(true);
-                let summary = json.get("summary").and_then(|s| s.as_str()).unwrap_or("Argus audit completed.").to_string();
+                let clean = json
+                    .get("issues")
+                    .and_then(|i| i.as_array())
+                    .map(|a| a.is_empty())
+                    .unwrap_or(true);
+                let summary = json
+                    .get("summary")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("Argus audit completed.")
+                    .to_string();
                 return (clean, summary);
             }
-            return (true, "Argus AST review clean. Zero high-risk vulnerabilities detected.".to_string());
+            return (
+                true,
+                "Argus AST review clean. Zero high-risk vulnerabilities detected.".to_string(),
+            );
         }
 
         if !res.success {
             let err_msg = if res.stderr.trim().is_empty() {
-                format!("Argus audit command failed with exit code {}", res.exit_code)
+                format!(
+                    "Argus audit command failed with exit code {}",
+                    res.exit_code
+                )
             } else {
-                format!("Argus audit failed (exit code {}): {}", res.exit_code, res.stderr.trim())
+                format!(
+                    "Argus audit failed (exit code {}): {}",
+                    res.exit_code,
+                    res.stderr.trim()
+                )
             };
             return (false, err_msg);
         }
 
-        (true, "Argus AST review clean. Zero high-risk vulnerabilities detected.".to_string())
+        (
+            true,
+            "Argus AST review clean. Zero high-risk vulnerabilities detected.".to_string(),
+        )
     }
 
-    pub async fn start_beacon_tunnel(&self, port: u16, subdomain: Option<&str>) -> (bool, String, String) {
+    pub async fn start_beacon_tunnel(
+        &self,
+        port: u16,
+        subdomain: Option<&str>,
+    ) -> (bool, String, String) {
         let sub_flag = match subdomain {
             Some(s) => format!("--subdomain {}", s),
             None => String::new(),
@@ -75,7 +100,9 @@ impl PillarTools {
     }
 
     pub fn get_pulse_metrics(&self) -> PulseMetrics {
-        let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let cpu_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
         PulseMetrics {
             cpu_count,
             uptime_secs: 3600,

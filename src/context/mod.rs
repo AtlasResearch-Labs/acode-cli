@@ -1,2 +1,2 @@
-pub mod memory;
 pub mod compressor;
+pub mod memory;

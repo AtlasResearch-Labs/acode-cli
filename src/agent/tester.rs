@@ -2,9 +2,9 @@
 //! Polyglot test runner across Rust, Node.js, Go, Python, C/C++, and Java/Kotlin
 //! with Proactive Test Impact Analysis and Test Scaffolding.
 
+use crate::tools::shell::ShellTools;
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::tools::shell::ShellTools;
 
 #[derive(Debug, Clone)]
 pub struct VerificationResult {
@@ -41,7 +41,9 @@ impl SelfHealingVerifier {
         if pkg_path.exists() {
             let runner = if self.workspace_root.join("pnpm-lock.yaml").exists() {
                 "pnpm"
-            } else if self.workspace_root.join("bun.lockb").exists() || self.workspace_root.join("bun.lock").exists() {
+            } else if self.workspace_root.join("bun.lockb").exists()
+                || self.workspace_root.join("bun.lock").exists()
+            {
                 "bun"
             } else if self.workspace_root.join("yarn.lock").exists() {
                 "yarn"
@@ -69,15 +71,18 @@ impl SelfHealingVerifier {
         }
 
         // Python
-        if self.workspace_root.join("pytest.ini").exists() 
+        if self.workspace_root.join("pytest.ini").exists()
             || self.workspace_root.join("pyproject.toml").exists()
             || self.workspace_root.join("tests").exists()
-            || self.workspace_root.join("test").exists() {
+            || self.workspace_root.join("test").exists()
+        {
             return Some("pytest".to_string());
         }
 
         // C / C++ / Make
-        if self.workspace_root.join("Makefile").exists() || self.workspace_root.join("makefile").exists() {
+        if self.workspace_root.join("Makefile").exists()
+            || self.workspace_root.join("makefile").exists()
+        {
             return Some("make test".to_string());
         }
 
@@ -85,7 +90,9 @@ impl SelfHealingVerifier {
         if self.workspace_root.join("pom.xml").exists() {
             return Some("mvn test".to_string());
         }
-        if self.workspace_root.join("build.gradle").exists() || self.workspace_root.join("build.gradle.kts").exists() {
+        if self.workspace_root.join("build.gradle").exists()
+            || self.workspace_root.join("build.gradle.kts").exists()
+        {
             return Some("./gradlew test".to_string());
         }
 
@@ -120,7 +127,9 @@ impl SelfHealingVerifier {
                 if pkg_has_test {
                     let runner = if self.workspace_root.join("pnpm-lock.yaml").exists() {
                         "pnpm"
-                    } else if self.workspace_root.join("bun.lockb").exists() || self.workspace_root.join("bun.lock").exists() {
+                    } else if self.workspace_root.join("bun.lockb").exists()
+                        || self.workspace_root.join("bun.lock").exists()
+                    {
                         "bun"
                     } else if self.workspace_root.join("yarn.lock").exists() {
                         "yarn"
@@ -138,16 +147,21 @@ impl SelfHealingVerifier {
                 }
             }
             "py" => {
-                if self.workspace_root.join("pytest.ini").exists() 
+                if self.workspace_root.join("pytest.ini").exists()
                     || self.workspace_root.join("pyproject.toml").exists()
                     || self.workspace_root.join("tests").exists()
-                    || self.workspace_root.join("test").exists() {
+                    || self.workspace_root.join("test").exists()
+                {
                     if !stem.is_empty() {
                         Some(format!("pytest -k {}", stem))
                     } else {
                         Some("pytest".to_string())
                     }
-                } else if self.workspace_root.join(format!("test_{}.py", stem)).exists() {
+                } else if self
+                    .workspace_root
+                    .join(format!("test_{}.py", stem))
+                    .exists()
+                {
                     Some(format!("pytest test_{}.py", stem))
                 } else {
                     None
@@ -173,8 +187,14 @@ impl SelfHealingVerifier {
             return Err(format!("Source file '{}' not found.", source_path_str));
         }
 
-        let ext = target_file.extension().and_then(|s| s.to_str()).unwrap_or("");
-        let stem = target_file.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
+        let ext = target_file
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let stem = target_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("module");
 
         match ext {
             "rs" => {
@@ -208,11 +228,17 @@ impl SelfHealingVerifier {
                 );
                 Ok((test_rel, scaffold))
             }
-            _ => Err(format!("Unsupported language extension '.{}' for test scaffolding.", ext)),
+            _ => Err(format!(
+                "Unsupported language extension '.{}' for test scaffolding.",
+                ext
+            )),
         }
     }
 
-    pub fn scaffold_test_for_file(&self, source_path_str: &str) -> Result<(String, String), String> {
+    pub fn scaffold_test_for_file(
+        &self,
+        source_path_str: &str,
+    ) -> Result<(String, String), String> {
         Self::scaffold_test(&self.workspace_root, source_path_str)
     }
 

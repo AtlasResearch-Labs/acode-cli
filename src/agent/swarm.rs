@@ -3,10 +3,10 @@
 //! Coordinates specialized sub-agents: Explorer (Reconnaissance), Coder (Implementation),
 //! and Verifier (Quality Assurance & Test Self-Healing).
 
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::time::Instant;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::agent::orchestrator::AgentEvent;
 use crate::context::memory::MemoryEngine;
@@ -32,7 +32,7 @@ impl SubAgentRole {
         }
     }
 
-    pub fn system_instructions(&self, workspace_root: &PathBuf) -> String {
+    pub fn system_instructions(&self, workspace_root: &Path) -> String {
         match self {
             SubAgentRole::Explorer => format!(
                 "You are the EXPLORER sub-agent in the Atlas Daedalus sovereign swarm.\n\
@@ -73,15 +73,35 @@ impl SubAgentRole {
     pub fn filter_tool_definitions(&self, all_defs: &[ToolDefinition]) -> Vec<ToolDefinition> {
         let allowed: &[&str] = match self {
             SubAgentRole::Explorer => &[
-                "view_file", "list_dir", "search_code", "extract_symbols",
-                "find_symbols", "git_status", "git_diff", "web_search", "web_fetch", "list_workspaces"
+                "view_file",
+                "list_dir",
+                "search_code",
+                "extract_symbols",
+                "find_symbols",
+                "git_status",
+                "git_diff",
+                "web_search",
+                "web_fetch",
+                "list_workspaces",
             ],
             SubAgentRole::Coder => &[
-                "view_file", "patch_file", "write_file", "search_code", "list_dir",
-                "extract_symbols", "find_symbols", "manage_dependencies", "run_command"
+                "view_file",
+                "patch_file",
+                "write_file",
+                "search_code",
+                "list_dir",
+                "extract_symbols",
+                "find_symbols",
+                "manage_dependencies",
+                "run_command",
             ],
             SubAgentRole::Verifier => &[
-                "run_tests", "run_command", "view_file", "argus_audit", "git_status", "git_diff"
+                "run_tests",
+                "run_command",
+                "view_file",
+                "argus_audit",
+                "git_status",
+                "git_diff",
             ],
         };
 
@@ -143,7 +163,8 @@ impl<'a> SwarmCoordinator<'a> {
     where
         F: FnMut(AgentEvent) + Send,
     {
-        self.blackbox.record("subagent_start", role.name(), objective, None, "START");
+        self.blackbox
+            .record("subagent_start", role.name(), objective, None, "START");
 
         let system_prompt = role.system_instructions(self.workspace_root);
         let mut history = vec![
@@ -174,9 +195,12 @@ impl<'a> SwarmCoordinator<'a> {
             let status_msg = format!("{} turn {}...", role.name(), turn);
             on_event(AgentEvent::Thinking(&status_msg));
 
-            let res = self.provider.complete_stream(&history, &scoped_defs, |tok| {
-                on_event(AgentEvent::Token(tok));
-            }).await?;
+            let res = self
+                .provider
+                .complete_stream(&history, &scoped_defs, |tok| {
+                    on_event(AgentEvent::Token(tok));
+                })
+                .await?;
 
             history.push(LLMMessage {
                 role: "assistant".to_string(),
@@ -195,14 +219,23 @@ impl<'a> SwarmCoordinator<'a> {
             };
 
             for call in &tool_calls {
-                on_event(AgentEvent::ToolStart { name: &call.name, args: &call.arguments });
+                on_event(AgentEvent::ToolStart {
+                    name: &call.name,
+                    args: &call.arguments,
+                });
 
-                let decision = self.security.evaluate(&call.name, &call.arguments, self.workspace_root);
+                let decision =
+                    self.security
+                        .evaluate(&call.name, &call.arguments, self.workspace_root);
                 match decision {
                     PermissionDecision::Allow => {}
                     PermissionDecision::Deny(r) => {
                         let out = format!("[SECURITY POLICY DENIED] {}", r);
-                        on_event(AgentEvent::ToolEnd { name: &call.name, success: false, output: &out });
+                        on_event(AgentEvent::ToolEnd {
+                            name: &call.name,
+                            success: false,
+                            output: &out,
+                        });
                         history.push(LLMMessage {
                             role: "tool".to_string(),
                             content: out,
@@ -212,13 +245,29 @@ impl<'a> SwarmCoordinator<'a> {
                         });
                         continue;
                     }
-                    PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+                    PermissionDecision::Prompt {
+                        reason,
+                        details,
+                        risk_level,
+                        suggest_trust_path,
+                    } => {
                         let allowed = self.security.prompt_user_interactive(
-                            &call.name, &reason, &details, risk_level, suggest_trust_path.as_deref()
+                            &call.name,
+                            &reason,
+                            &details,
+                            risk_level,
+                            suggest_trust_path.as_deref(),
                         );
                         if !allowed {
-                            let out = format!("[SECURITY CHALLENGE DENIED] Execution rejected: {}", details);
-                            on_event(AgentEvent::ToolEnd { name: &call.name, success: false, output: &out });
+                            let out = format!(
+                                "[SECURITY CHALLENGE DENIED] Execution rejected: {}",
+                                details
+                            );
+                            on_event(AgentEvent::ToolEnd {
+                                name: &call.name,
+                                success: false,
+                                output: &out,
+                            });
                             history.push(LLMMessage {
                                 role: "tool".to_string(),
                                 content: out,
@@ -238,7 +287,11 @@ impl<'a> SwarmCoordinator<'a> {
                 }
 
                 let (success, output) = self.tools.execute_tool(&call.name, &call.arguments).await;
-                on_event(AgentEvent::ToolEnd { name: &call.name, success, output: &output });
+                on_event(AgentEvent::ToolEnd {
+                    name: &call.name,
+                    success,
+                    output: &output,
+                });
 
                 history.push(LLMMessage {
                     role: "tool".to_string(),
@@ -250,7 +303,8 @@ impl<'a> SwarmCoordinator<'a> {
             }
         }
 
-        self.blackbox.record("subagent_end", role.name(), &summary, None, "COMPLETE");
+        self.blackbox
+            .record("subagent_end", role.name(), &summary, None, "COMPLETE");
         let files: Vec<String> = modified_files.into_iter().collect();
         Ok((summary, files))
     }
@@ -268,64 +322,71 @@ impl<'a> SwarmCoordinator<'a> {
         let start = Instant::now();
 
         // 1. Phase 1: Explorer Reconnaissance
-        on_event(AgentEvent::Thinking("Phase 1/3: Dispatching EXPLORER sub-agent for reconnaissance..."));
+        on_event(AgentEvent::Thinking(
+            "Phase 1/3: Dispatching EXPLORER sub-agent for reconnaissance...",
+        ));
         let explorer_objective = format!(
             "Analyze the codebase to prepare for this goal: {}\n\
             Identify: 1) Affected files and line numbers 2) Existing patterns and symbol definitions 3) Risks and caveats.",
             goal
         );
-        let (explorer_brief, _) = self.run_subagent(
-            SubAgentRole::Explorer,
-            &explorer_objective,
-            8,
-            |ev| on_event(ev),
-        ).await?;
+        let (explorer_brief, _) = self
+            .run_subagent(
+                SubAgentRole::Explorer,
+                &explorer_objective,
+                8,
+                &mut on_event,
+            )
+            .await?;
 
         // 2. Phase 2: Coder Implementation
-        on_event(AgentEvent::Thinking("Phase 2/3: Dispatching CODER sub-agent for surgical implementation..."));
+        on_event(AgentEvent::Thinking(
+            "Phase 2/3: Dispatching CODER sub-agent for surgical implementation...",
+        ));
         let coder_objective = format!(
             "OBJECTIVE: {}\n\nRECONNAISSANCE BRIEF:\n{}\n\nExecute the minimal surgical edits required.",
             goal, explorer_brief
         );
-        let (coder_summary, mut all_modified) = self.run_subagent(
-            SubAgentRole::Coder,
-            &coder_objective,
-            12,
-            |ev| on_event(ev),
-        ).await?;
+        let (coder_summary, mut all_modified) = self
+            .run_subagent(SubAgentRole::Coder, &coder_objective, 12, &mut on_event)
+            .await?;
 
         // 3. Phase 3: Verifier Quality Assurance & Self-Healing
-        on_event(AgentEvent::Thinking("Phase 3/3: Dispatching VERIFIER sub-agent for validation & test audit..."));
+        on_event(AgentEvent::Thinking(
+            "Phase 3/3: Dispatching VERIFIER sub-agent for validation & test audit...",
+        ));
         let verifier_objective = format!(
             "Verify the implementation for: {}\n\
             Modified files: {}\n\
             Run project tests and inspect build output. Report [VERIFICATION PASSED] if clean or diagnose failures.",
             goal, all_modified.join(", ")
         );
-        let (mut verifier_report, _) = self.run_subagent(
-            SubAgentRole::Verifier,
-            &verifier_objective,
-            6,
-            |ev| on_event(ev),
-        ).await?;
+        let (mut verifier_report, _) = self
+            .run_subagent(
+                SubAgentRole::Verifier,
+                &verifier_objective,
+                6,
+                &mut on_event,
+            )
+            .await?;
 
         let mut verification_passed = verifier_report.contains("[VERIFICATION PASSED]")
             || (!verifier_report.contains("FAILED") && !verifier_report.contains("error[E"));
 
         // If verification failed and files were modified, run 1 self-healing repair cycle
         if !verification_passed && !all_modified.is_empty() {
-            on_event(AgentEvent::Thinking("Self-Healing: Verification failed. Dispatching CODER sub-agent to repair..."));
+            on_event(AgentEvent::Thinking(
+                "Self-Healing: Verification failed. Dispatching CODER sub-agent to repair...",
+            ));
             let repair_objective = format!(
                 "REPAIR REQUIRED: Verification reported failures:\n{}\n\n\
                 Inspect compiler/test errors and apply fixes to affected files: {}",
-                verifier_report, all_modified.join(", ")
+                verifier_report,
+                all_modified.join(", ")
             );
-            let (_repair_summary, repair_files) = self.run_subagent(
-                SubAgentRole::Coder,
-                &repair_objective,
-                8,
-                |ev| on_event(ev),
-            ).await?;
+            let (_repair_summary, repair_files) = self
+                .run_subagent(SubAgentRole::Coder, &repair_objective, 8, &mut on_event)
+                .await?;
 
             for rf in repair_files {
                 if !all_modified.contains(&rf) {
@@ -335,12 +396,9 @@ impl<'a> SwarmCoordinator<'a> {
 
             // Re-verify
             on_event(AgentEvent::Thinking("Re-verifying repaired changes..."));
-            let (reverify_report, _) = self.run_subagent(
-                SubAgentRole::Verifier,
-                &verifier_objective,
-                4,
-                |ev| on_event(ev),
-            ).await?;
+            let (reverify_report, _) = self
+                .run_subagent(SubAgentRole::Verifier, &verifier_objective, 4, on_event)
+                .await?;
 
             verifier_report = reverify_report;
             verification_passed = verifier_report.contains("[VERIFICATION PASSED]")
@@ -392,13 +450,41 @@ mod tests {
     #[test]
     fn test_subagent_role_tool_filtering() {
         let defs = vec![
-            ToolDefinition { name: "view_file".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
-            ToolDefinition { name: "search_code".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
-            ToolDefinition { name: "patch_file".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
-            ToolDefinition { name: "write_file".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
-            ToolDefinition { name: "run_tests".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
-            ToolDefinition { name: "argus_audit".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
-            ToolDefinition { name: "mcp__db__query".to_string(), description: "".to_string(), parameters: serde_json::json!({}) },
+            ToolDefinition {
+                name: "view_file".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "search_code".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "patch_file".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "write_file".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "run_tests".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "argus_audit".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "mcp__db__query".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({}),
+            },
         ];
 
         let exp_defs = SubAgentRole::Explorer.filter_tool_definitions(&defs);
@@ -425,4 +511,3 @@ mod tests {
         assert!(!verifier_names.contains(&"write_file"));
     }
 }
-

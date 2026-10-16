@@ -22,7 +22,13 @@ impl TuiRenderer {
             "{}{}  ATLAS DAEDALUS (acode){}  {}v{}-industrial · Native Rust Engine · Atlas Research Labs{}",
             Self::BOLD, Self::WHITE, Self::RESET, Self::DIM, env!("CARGO_PKG_VERSION"), Self::RESET
         );
-        println!("{}  Workspace: {}{}{}", Self::DIM, Self::WHITE, workspace_root, Self::RESET);
+        println!(
+            "{}  Workspace: {}{}{}",
+            Self::DIM,
+            Self::WHITE,
+            workspace_root,
+            Self::RESET
+        );
         let sec_color = match security {
             "full" => Self::GREEN,
             "sandboxed" => Self::YELLOW,
@@ -31,13 +37,27 @@ impl TuiRenderer {
         };
         println!(
             "{}  Security:  {}{}{}  {}Provider: {}{}{}  {}Model: {}{}{}",
-            Self::DIM, sec_color, security, Self::RESET,
-            Self::DIM, Self::GREEN, provider, Self::RESET,
-            Self::DIM, Self::CYAN, model, Self::RESET
+            Self::DIM,
+            sec_color,
+            security,
+            Self::RESET,
+            Self::DIM,
+            Self::GREEN,
+            provider,
+            Self::RESET,
+            Self::DIM,
+            Self::CYAN,
+            model,
+            Self::RESET
         );
         println!(
             "{}  Type {}/help{} for commands, {}!<cmd>{} for shell, or enter prompt to begin.{}",
-            Self::DIM, Self::WHITE, Self::RESET, Self::YELLOW, Self::RESET, Self::RESET
+            Self::DIM,
+            Self::WHITE,
+            Self::RESET,
+            Self::YELLOW,
+            Self::RESET,
+            Self::RESET
         );
         println!("{}{}{}\n", Self::CYAN, border, Self::RESET);
     }
@@ -63,7 +83,14 @@ impl TuiRenderer {
         };
         println!(
             "\n{}[TOOL CALL]{} {}{}{} {}{}{}",
-            Self::MAGENTA, Self::RESET, Self::BOLD, name, Self::RESET, Self::DIM, trimmed, Self::RESET
+            Self::MAGENTA,
+            Self::RESET,
+            Self::BOLD,
+            name,
+            Self::RESET,
+            Self::DIM,
+            trimmed,
+            Self::RESET
         );
     }
 
@@ -78,18 +105,41 @@ impl TuiRenderer {
         } else {
             output.to_string()
         };
-        println!("{} {}{} output:{}\n{}{}{}", tag, Self::DIM, name, Self::RESET, Self::GRAY, preview, Self::RESET);
+        println!(
+            "{} {}{} output:{}\n{}{}{}",
+            tag,
+            Self::DIM,
+            name,
+            Self::RESET,
+            Self::GRAY,
+            preview,
+            Self::RESET
+        );
     }
 
     pub fn print_test_result(command: &str, passed: bool, output: &str) {
         let tag = if passed {
-            format!("{}{}[VERIFICATION PASSED]{}", Self::BOLD, Self::GREEN, Self::RESET)
+            format!(
+                "{}{}[VERIFICATION PASSED]{}",
+                Self::BOLD,
+                Self::GREEN,
+                Self::RESET
+            )
         } else {
-            format!("{}{}[VERIFICATION FAILED]{}", Self::BOLD, Self::RED, Self::RESET)
+            format!(
+                "{}{}[VERIFICATION FAILED]{}",
+                Self::BOLD,
+                Self::RED,
+                Self::RESET
+            )
         };
         println!("\n{} {}{}{}", tag, Self::CYAN, command, Self::RESET);
         if !passed {
-            let snippet = if output.chars().count() > 500 { Self::safe_truncate(output, 500) } else { output };
+            let snippet = if output.chars().count() > 500 {
+                Self::safe_truncate(output, 500)
+            } else {
+                output
+            };
             println!("{}{}{}", Self::RED, snippet, Self::RESET);
         }
     }
@@ -138,9 +188,14 @@ impl TuiRenderer {
         if additions > 0 || deletions > 0 {
             println!(
                 "\n{}[DIFF SUMMARY]{} {}+{} additions{} / {}-{} deletions{}",
-                Self::BOLD, Self::RESET,
-                Self::GREEN, additions, Self::RESET,
-                Self::RED, deletions, Self::RESET
+                Self::BOLD,
+                Self::RESET,
+                Self::GREEN,
+                additions,
+                Self::RESET,
+                Self::RED,
+                deletions,
+                Self::RESET
             );
         }
 

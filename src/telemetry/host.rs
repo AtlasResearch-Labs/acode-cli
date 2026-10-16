@@ -25,14 +25,12 @@ impl HostInspector {
         let os_name = std::env::consts::OS.to_string();
 
         #[cfg(target_os = "windows")]
-        let (total_memory_mb, available_memory_mb, process_rss_mb, uptime_secs) = {
-            Self::collect_windows()
-        };
+        let (total_memory_mb, available_memory_mb, process_rss_mb, uptime_secs) =
+            { Self::collect_windows() };
 
         #[cfg(not(target_os = "windows"))]
-        let (total_memory_mb, available_memory_mb, process_rss_mb, uptime_secs) = {
-            Self::collect_unix()
-        };
+        let (total_memory_mb, available_memory_mb, process_rss_mb, uptime_secs) =
+            { Self::collect_unix() };
 
         HostMetrics {
             total_memory_mb,
@@ -46,7 +44,7 @@ impl HostInspector {
 
     #[cfg(target_os = "windows")]
     fn collect_windows() -> (u64, u64, u64, u64) {
-        #[allow(non_snake_case)]
+        #[allow(non_snake_case, clippy::upper_case_acronyms)]
         #[repr(C)]
         struct MEMORYSTATUSEX {
             dwLength: u32,

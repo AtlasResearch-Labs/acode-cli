@@ -1,23 +1,18 @@
 //! Atlas Daedalus — Security Policies & Risk Scanners
 //! (C) 2026 Atlas Research Labs — MIT License
 
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SecurityMode {
     #[serde(rename = "full")]
     FullAccess,
     #[serde(rename = "sandboxed")]
+    #[default]
     Sandboxed,
     #[serde(rename = "strict")]
     Strict,
-}
-
-impl Default for SecurityMode {
-    fn default() -> Self {
-        SecurityMode::Sandboxed
-    }
 }
 
 impl std::str::FromStr for SecurityMode {
@@ -28,7 +23,10 @@ impl std::str::FromStr for SecurityMode {
             "full" | "fullaccess" | "full-access" | "unrestricted" => Ok(SecurityMode::FullAccess),
             "sandboxed" | "sandbox" | "standard" => Ok(SecurityMode::Sandboxed),
             "strict" | "paranoid" | "zero-trust" => Ok(SecurityMode::Strict),
-            _ => Err(format!("Unknown security mode: '{}'. Valid options: full, sandboxed, strict", s)),
+            _ => Err(format!(
+                "Unknown security mode: '{}'. Valid options: full, sandboxed, strict",
+                s
+            )),
         }
     }
 }
@@ -217,31 +215,55 @@ impl SecurityPolicy {
             || (lower.contains("while true; do") && lower.contains("& done"))
             || (lower.contains("while :; do") && lower.contains("& done"))
         {
-            return Some((RiskLevel::Critical, "Fork bomb or process exhaustion denial-of-service vector"));
+            return Some((
+                RiskLevel::Critical,
+                "Fork bomb or process exhaustion denial-of-service vector",
+            ));
         }
 
         // 2. Permissive permission modifications (chmod -R 777, chmod 777 /, chown -R)
-        if (lower.contains("chmod ") && (lower.contains(" 777") || lower.contains(" a+rwx") || lower.contains(" 0777")))
+        if (lower.contains("chmod ")
+            && (lower.contains(" 777") || lower.contains(" a+rwx") || lower.contains(" 0777")))
             || (lower.contains("chmod -r") && (lower.contains(" 7") || lower.contains(" a+")))
-            || (lower.contains("chmod") && lower.contains("-r") && (lower.contains(" /") || lower.contains(" c:\\")))
+            || (lower.contains("chmod")
+                && lower.contains("-r")
+                && (lower.contains(" /") || lower.contains(" c:\\")))
             || lower.contains("chown -r")
         {
-            return Some((RiskLevel::Critical, "Permissive recursive permission or ownership modification"));
+            return Some((
+                RiskLevel::Critical,
+                "Permissive recursive permission or ownership modification",
+            ));
         }
 
         // 3. Dynamic command substitution ($(cmd) or `cmd`)
         if (lower.contains("$(") && lower.contains(")")) || lower.contains('`') {
-            return Some((RiskLevel::High, "Dynamic command substitution via subshell or backticks"));
+            return Some((
+                RiskLevel::High,
+                "Dynamic command substitution via subshell or backticks",
+            ));
         }
 
         // 4. Pipe to shell interpreter (e.g. "base64 | sh", "curl ... | bash")
         let pipe_interpreters = [
-            "| sh", "| bash", "| zsh", "| python", "| python3", "| perl",
-            "| ruby", "| node", "| powershell", "| pwsh", "| cmd"
+            "| sh",
+            "| bash",
+            "| zsh",
+            "| python",
+            "| python3",
+            "| perl",
+            "| ruby",
+            "| node",
+            "| powershell",
+            "| pwsh",
+            "| cmd",
         ];
         for pi in &pipe_interpreters {
             if lower.contains(pi) {
-                return Some((RiskLevel::High, "Arbitrary pipeline execution via shell interpreter"));
+                return Some((
+                    RiskLevel::High,
+                    "Arbitrary pipeline execution via shell interpreter",
+                ));
             }
         }
 
@@ -263,10 +285,22 @@ impl SecurityPolicy {
             || lower.contains(".kube");
 
         if has_network_tool && has_sensitive_file {
-            return Some((RiskLevel::Critical, "Potential network exfiltration of sensitive credential files"));
+            return Some((
+                RiskLevel::Critical,
+                "Potential network exfiltration of sensitive credential files",
+            ));
         }
-        if lower.contains(" | nc ") || lower.contains(" | ncat ") || lower.contains(" | netcat ") || lower.contains(" | socat ") || lower.contains("/dev/tcp/") || lower.contains("/dev/udp/") {
-            return Some((RiskLevel::Critical, "Raw socket transmission / reverse shell vector"));
+        if lower.contains(" | nc ")
+            || lower.contains(" | ncat ")
+            || lower.contains(" | netcat ")
+            || lower.contains(" | socat ")
+            || lower.contains("/dev/tcp/")
+            || lower.contains("/dev/udp/")
+        {
+            return Some((
+                RiskLevel::Critical,
+                "Raw socket transmission / reverse shell vector",
+            ));
         }
 
         // 6. Direct inspection of sensitive credentials via terminal commands
@@ -332,21 +366,37 @@ impl SecurityPolicy {
         let normalized = words.join(" ").to_lowercase();
 
         // 1. Critical destructive filesystem wipe commands
-        if normalized.contains("rm -rf /") 
-            || normalized.contains("rm -rf /*") 
-            || normalized.contains("del /f /s /q c:\\") 
+        if normalized.contains("rm -rf /")
+            || normalized.contains("rm -rf /*")
+            || normalized.contains("del /f /s /q c:\\")
             || normalized.contains("del /f /q c:\\")
         {
             return Some((RiskLevel::Critical, "Mass destructive filesystem deletion"));
         }
-        if normalized.contains("mkfs") || normalized.starts_with("format ") || normalized.contains("dd if=") {
+        if normalized.contains("mkfs")
+            || normalized.starts_with("format ")
+            || normalized.contains("dd if=")
+        {
             return Some((RiskLevel::Critical, "Disk format or low-level block write"));
         }
 
         // 2. High risk commands: recursive removal, user home deletion, python rmtree, find -delete
-        if normalized.starts_with("rm -rf ") || normalized.starts_with("rm -r ") || normalized.starts_with("rm -r -f ") || normalized.starts_with("rm -f -r ") || normalized.contains(" rmdir /s") || normalized.starts_with("rmdir /s") {
-            if normalized.contains(" ~") || normalized.contains(" /") || normalized.contains(" *") || normalized.contains(" ..") {
-                return Some((RiskLevel::Critical, "Destructive recursive removal of root, home, or wildcards"));
+        if normalized.starts_with("rm -rf ")
+            || normalized.starts_with("rm -r ")
+            || normalized.starts_with("rm -r -f ")
+            || normalized.starts_with("rm -f -r ")
+            || normalized.contains(" rmdir /s")
+            || normalized.starts_with("rmdir /s")
+        {
+            if normalized.contains(" ~")
+                || normalized.contains(" /")
+                || normalized.contains(" *")
+                || normalized.contains(" ..")
+            {
+                return Some((
+                    RiskLevel::Critical,
+                    "Destructive recursive removal of root, home, or wildcards",
+                ));
             }
             return Some((RiskLevel::High, "Recursive directory deletion"));
         }
@@ -356,32 +406,59 @@ impl SecurityPolicy {
         }
 
         if normalized.contains("rmtree") || normalized.contains("shutil.rmtree") {
-            return Some((RiskLevel::Critical, "Scripted recursive tree deletion via Python"));
+            return Some((
+                RiskLevel::Critical,
+                "Scripted recursive tree deletion via Python",
+            ));
         }
 
-        if normalized.contains("git push") && (normalized.contains("--force") || normalized.contains("-f ") || normalized.ends_with("-f")) {
+        if normalized.contains("git push")
+            && (normalized.contains("--force")
+                || normalized.contains("-f ")
+                || normalized.ends_with("-f"))
+        {
             return Some((RiskLevel::High, "Force push altering remote Git history"));
         }
         if normalized.contains("git reset --hard") || normalized.contains("git clean -fdx") {
-            return Some((RiskLevel::High, "Destructive Git reset discarding uncommitted code"));
+            return Some((
+                RiskLevel::High,
+                "Destructive Git reset discarding uncommitted code",
+            ));
         }
         if normalized.contains("npm publish") || normalized.contains("cargo publish") {
-            return Some((RiskLevel::High, "Publishing package to public package registry"));
+            return Some((
+                RiskLevel::High,
+                "Publishing package to public package registry",
+            ));
         }
         if normalized.contains("shutdown") || normalized.contains("reboot") {
             return Some((RiskLevel::High, "System power state modification"));
         }
 
         // 3. Network exfiltration and reverse shells
-        if normalized.contains(" | nc ") || normalized.contains(" | ncat ") || normalized.contains(" | netcat ") || normalized.contains(" | socat ") {
-            return Some((RiskLevel::Critical, "Piped network exfiltration via netcat/socat"));
+        if normalized.contains(" | nc ")
+            || normalized.contains(" | ncat ")
+            || normalized.contains(" | netcat ")
+            || normalized.contains(" | socat ")
+        {
+            return Some((
+                RiskLevel::Critical,
+                "Piped network exfiltration via netcat/socat",
+            ));
         }
         if normalized.contains("/dev/tcp/") || normalized.contains("/dev/udp/") {
-            return Some((RiskLevel::Critical, "Raw socket transmission / reverse shell vector"));
+            return Some((
+                RiskLevel::Critical,
+                "Raw socket transmission / reverse shell vector",
+            ));
         }
 
         // 4. Medium risk network / script pipe execution
-        if normalized.starts_with("curl ") || normalized.starts_with("wget ") || normalized.contains("| sh") || normalized.contains("| bash") {
+        if normalized.starts_with("curl ")
+            || normalized.starts_with("wget ")
+            || normalized.contains("| sh")
+            || normalized.contains("| bash")
+        {
             return Some((RiskLevel::Medium, "Remote script or web download execution"));
         }
 

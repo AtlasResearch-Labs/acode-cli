@@ -2,12 +2,12 @@
 //! Implements an append-only, tamper-evident event stream in `.daedalus/blackbox.jsonl`
 //! for session telemetry, audit logging, crash replay, and tool execution analytics.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use crate::telemetry::host::{HostInspector, HostMetrics};
 
@@ -77,7 +77,10 @@ impl BlackBoxRecorder {
         let prev_hash = self.get_last_chain_hash();
         let payload_hash = sha256_hash(payload.as_bytes());
         let host_metrics = HostInspector::collect();
-        let chain_material = format!("{}:{}:{}:{}:{}", prev_hash, event_type, source, payload_hash, status);
+        let chain_material = format!(
+            "{}:{}:{}:{}:{}",
+            prev_hash, event_type, source, payload_hash, status
+        );
         let chain_hash = sha256_hash(chain_material.as_bytes());
 
         let summary = if payload.len() > 200 {
@@ -105,7 +108,11 @@ impl BlackBoxRecorder {
         };
 
         if let Ok(line) = serde_json::to_string(&event) {
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&self.log_file) {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.log_file)
+            {
                 let _ = writeln!(file, "{}", line);
             }
         }
@@ -128,7 +135,10 @@ impl BlackBoxRecorder {
                         if prev != &expected_prev {
                             return (false, verified_count);
                         }
-                        let chain_material = format!("{}:{}:{}:{}:{}", prev, evt.event_type, evt.source, evt.payload_hash, evt.status);
+                        let chain_material = format!(
+                            "{}:{}:{}:{}:{}",
+                            prev, evt.event_type, evt.source, evt.payload_hash, evt.status
+                        );
                         let computed = sha256_hash(chain_material.as_bytes());
                         if &computed != chain {
                             return (false, verified_count);
@@ -183,7 +193,13 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("daedalus_test_{}", rand_suffix()));
         let _ = fs::create_dir_all(&temp_dir);
         let recorder = BlackBoxRecorder::new(&temp_dir);
-        let evt = recorder.record("test_event", "unit_test", "hello world payload", Some(42), "OK");
+        let evt = recorder.record(
+            "test_event",
+            "unit_test",
+            "hello world payload",
+            Some(42),
+            "OK",
+        );
         assert_eq!(evt.event_type, "test_event");
         assert_eq!(evt.status, "OK");
         assert_eq!(evt.payload_hash.len(), 64);

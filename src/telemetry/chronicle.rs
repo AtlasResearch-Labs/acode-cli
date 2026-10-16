@@ -2,11 +2,11 @@
 //! High-precision local execution tracing, token computation, and cost attribution.
 //! Appends structured spans directly to `.chronicle/traces.jsonl`.
 
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -42,6 +42,7 @@ impl ChronicleTracer {
         Self { trace_file }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_span(
         &self,
         provider: &str,
@@ -58,15 +59,16 @@ impl ChronicleTracer {
         let total_tokens = prompt_tokens + completion_tokens;
 
         let m = model.to_lowercase();
-        let (prompt_rate, completion_rate) = if m.contains("claude-3-5-sonnet") || m.contains("gpt-4o") {
-            (3.0, 15.0)
-        } else if m.contains("flash") || m.contains("mini") || m.contains("haiku") {
-            (0.15, 0.6)
-        } else if m.contains("ollama") || m.contains("local") {
-            (0.0, 0.0)
-        } else {
-            (1.5, 4.5)
-        };
+        let (prompt_rate, completion_rate) =
+            if m.contains("claude-3-5-sonnet") || m.contains("gpt-4o") {
+                (3.0, 15.0)
+            } else if m.contains("flash") || m.contains("mini") || m.contains("haiku") {
+                (0.15, 0.6)
+            } else if m.contains("ollama") || m.contains("local") {
+                (0.0, 0.0)
+            } else {
+                (1.5, 4.5)
+            };
 
         let cost_usd = ((prompt_tokens as f64 * prompt_rate)
             + (completion_tokens as f64 * completion_rate))

@@ -29,7 +29,10 @@ impl ShellTools {
             return ExecResult {
                 success: false,
                 stdout: String::new(),
-                stderr: format!("[THREAT_SHIELD INTERCEPT: {}] {}", threat.threat_id, threat.description),
+                stderr: format!(
+                    "[THREAT_SHIELD INTERCEPT: {}] {}",
+                    threat.threat_id, threat.description
+                ),
                 exit_code: 126,
                 duration_ms: 0,
             };
@@ -48,17 +51,27 @@ impl ShellTools {
             c
         } else {
             // Check if bubblewrap sandbox containment is available on Linux host
-            let bwrap_available = !cfg!(target_os = "android") && Path::new("/usr/bin/bwrap").exists();
+            let bwrap_available =
+                !cfg!(target_os = "android") && Path::new("/usr/bin/bwrap").exists();
             if bwrap_available {
                 let mut c = Command::new("/usr/bin/bwrap");
                 let ws_str = self.workspace_root.to_string_lossy().to_string();
-                c.arg("--ro-bind").arg("/").arg("/")
-                    .arg("--dev").arg("/dev")
-                    .arg("--proc").arg("/proc")
-                    .arg("--tmpfs").arg("/tmp")
-                    .arg("--bind").arg(&ws_str).arg(&ws_str)
+                c.arg("--ro-bind")
+                    .arg("/")
+                    .arg("/")
+                    .arg("--dev")
+                    .arg("/dev")
+                    .arg("--proc")
+                    .arg("/proc")
+                    .arg("--tmpfs")
+                    .arg("/tmp")
+                    .arg("--bind")
+                    .arg(&ws_str)
+                    .arg(&ws_str)
                     .arg("--die-with-parent")
-                    .arg("/bin/sh").arg("-c").arg(command);
+                    .arg("/bin/sh")
+                    .arg("-c")
+                    .arg(command);
                 c
             } else {
                 let mut c = Command::new("/bin/sh");

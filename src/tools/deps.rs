@@ -2,10 +2,10 @@
 //! Direct interface to project ecosystems (Cargo, NPM, PNPM, Bun, Yarn, Pip, UV, Poetry, GoMod)
 //! for instant dependency listing, addition, removal, and vulnerability audits.
 
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Ecosystem {
@@ -117,7 +117,8 @@ impl DependencyManager {
         version: Option<&str>,
         is_dev: bool,
     ) -> Result<String, String> {
-        let eco = self.detect_ecosystem(root)
+        let eco = self
+            .detect_ecosystem(root)
             .ok_or_else(|| "Cannot add dependency: unknown project ecosystem.".to_string())?;
 
         let spec = match version {
@@ -175,19 +176,16 @@ impl DependencyManager {
                 }
                 ("poetry", a)
             }
-            Ecosystem::Pip => {
-                ("pip", vec!["install".to_string(), spec])
-            }
-            Ecosystem::GoMod => {
-                ("go", vec!["get".to_string(), spec])
-            }
+            Ecosystem::Pip => ("pip", vec!["install".to_string(), spec]),
+            Ecosystem::GoMod => ("go", vec!["get".to_string(), spec]),
         };
 
         Self::execute_cli(cmd, &args, root)
     }
 
     pub fn remove_dependency(&self, root: &Path, package: &str) -> Result<String, String> {
-        let eco = self.detect_ecosystem(root)
+        let eco = self
+            .detect_ecosystem(root)
             .ok_or_else(|| "Cannot remove dependency: unknown project ecosystem.".to_string())?;
 
         let (cmd, args) = match eco {
@@ -198,7 +196,14 @@ impl DependencyManager {
             Ecosystem::Npm => ("npm", vec!["uninstall".to_string(), package.to_string()]),
             Ecosystem::Uv => ("uv", vec!["remove".to_string(), package.to_string()]),
             Ecosystem::Poetry => ("poetry", vec!["remove".to_string(), package.to_string()]),
-            Ecosystem::Pip => ("pip", vec!["uninstall".to_string(), "-y".to_string(), package.to_string()]),
+            Ecosystem::Pip => (
+                "pip",
+                vec![
+                    "uninstall".to_string(),
+                    "-y".to_string(),
+                    package.to_string(),
+                ],
+            ),
             Ecosystem::GoMod => ("go", vec!["mod".to_string(), "tidy".to_string()]),
         };
 
@@ -206,7 +211,8 @@ impl DependencyManager {
     }
 
     pub fn audit_dependencies(&self, root: &Path) -> Result<String, String> {
-        let eco = self.detect_ecosystem(root)
+        let eco = self
+            .detect_ecosystem(root)
             .ok_or_else(|| "Cannot audit dependencies: unknown project ecosystem.".to_string())?;
 
         let (cmd, args) = match eco {
@@ -215,7 +221,9 @@ impl DependencyManager {
             Ecosystem::Pnpm => ("pnpm", vec!["audit".to_string()]),
             Ecosystem::Bun => ("bun", vec!["pm".to_string(), "audit".to_string()]),
             Ecosystem::Yarn => ("yarn", vec!["audit".to_string()]),
-            Ecosystem::Pip | Ecosystem::Uv | Ecosystem::Poetry => ("pip", vec!["check".to_string()]),
+            Ecosystem::Pip | Ecosystem::Uv | Ecosystem::Poetry => {
+                ("pip", vec!["check".to_string()])
+            }
             Ecosystem::GoMod => ("go", vec!["vet".to_string(), "./...".to_string()]),
         };
 
@@ -244,12 +252,16 @@ impl DependencyManager {
                 if out.status.success() {
                     let mut combined = stdout;
                     if !stderr.is_empty() {
-                        combined.push_str("\n");
+                        combined.push('\n');
                         combined.push_str(&stderr);
                     }
                     Ok(combined.trim().to_string())
                 } else {
-                    Err(format!("Exit code {}: {}", out.status.code().unwrap_or(1), stderr.trim()))
+                    Err(format!(
+                        "Exit code {}: {}",
+                        out.status.code().unwrap_or(1),
+                        stderr.trim()
+                    ))
                 }
             }
             Err(e) => Err(format!("Failed to execute '{}': {}", cmd_name, e)),
@@ -257,8 +269,8 @@ impl DependencyManager {
     }
 
     fn parse_cargo_deps(path: &Path) -> Result<Vec<DependencyInfo>, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read Cargo.toml: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read Cargo.toml: {}", e))?;
 
         let mut results = Vec::new();
         let mut current_section = "";
@@ -275,7 +287,8 @@ impl DependencyManager {
             }
 
             let is_dep_sec = current_section == "[dependencies]";
-            let is_dev_sec = current_section == "[dev-dependencies]" || current_section == "[build-dependencies]";
+            let is_dev_sec = current_section == "[dev-dependencies]"
+                || current_section == "[build-dependencies]";
 
             if (is_dep_sec || is_dev_sec) && trimmed.contains('=') {
                 let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
@@ -311,8 +324,8 @@ impl DependencyManager {
     }
 
     fn parse_npm_deps(path: &Path) -> Result<Vec<DependencyInfo>, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read package.json: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read package.json: {}", e))?;
 
         let json: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("Invalid package.json JSON: {}", e))?;
@@ -390,11 +403,18 @@ impl DependencyManager {
                     in_deps = false;
                     continue;
                 }
-                let clean = trimmed.trim_matches('"').trim_matches('\'').trim_matches(',');
+                let clean = trimmed
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .trim_matches(',');
                 if !clean.is_empty() {
-                    let parts: Vec<&str> = clean.split(|c| c == '=' || c == '>' || c == '<').collect();
+                    let parts: Vec<&str> = clean.split(['=', '>', '<']).collect();
                     let name = parts[0].trim();
-                    let ver = if parts.len() > 1 { clean[name.len()..].trim() } else { "latest" };
+                    let ver = if parts.len() > 1 {
+                        clean[name.len()..].trim()
+                    } else {
+                        "latest"
+                    };
                     results.push(DependencyInfo {
                         name: name.to_string(),
                         version: ver.to_string(),
@@ -408,8 +428,8 @@ impl DependencyManager {
     }
 
     fn parse_go_deps(path: &Path) -> Result<Vec<DependencyInfo>, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read go.mod: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read go.mod: {}", e))?;
 
         let mut results = Vec::new();
         let mut in_require = false;
@@ -433,8 +453,8 @@ impl DependencyManager {
                         is_dev: false,
                     });
                 }
-            } else if trimmed.starts_with("require ") {
-                let parts: Vec<&str> = trimmed[8..].split_whitespace().collect();
+            } else if let Some(stripped) = trimmed.strip_prefix("require ") {
+                let parts: Vec<&str> = stripped.split_whitespace().collect();
                 if parts.len() >= 2 {
                     results.push(DependencyInfo {
                         name: parts[0].to_string(),

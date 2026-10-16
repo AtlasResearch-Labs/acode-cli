@@ -4,13 +4,13 @@
 
 #![allow(dead_code)]
 
-mod telemetry;
-mod context;
-mod tools;
-mod providers;
-mod security;
 mod agent;
 mod cli;
+mod context;
+mod providers;
+mod security;
+mod telemetry;
+mod tools;
 
 use clap::Parser;
 use std::env;
@@ -52,7 +52,9 @@ async fn main() {
 
     // Global fallback from ~/.daedalus/.env
     if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
-        let global_env = std::path::PathBuf::from(home).join(".daedalus").join(".env");
+        let global_env = std::path::PathBuf::from(home)
+            .join(".daedalus")
+            .join(".env");
         if global_env.exists() {
             let _ = dotenvy::from_path(&global_env);
         }
@@ -93,50 +95,72 @@ async fn main() {
             &sec_str,
         );
 
-        println!("{}[TASK]{} {}\n", TuiRenderer::BOLD, TuiRenderer::RESET, full_prompt);
+        println!(
+            "{}[TASK]{} {}\n",
+            TuiRenderer::BOLD,
+            TuiRenderer::RESET,
+            full_prompt
+        );
 
         let mut streamed_any = false;
-        let res = orchestrator.run_task(&full_prompt, |event| match event {
-            AgentEvent::Thinking(s) => {
-                if streamed_any {
-                    println!();
-                    streamed_any = false;
+        let res = orchestrator
+            .run_task(&full_prompt, |event| match event {
+                AgentEvent::Thinking(s) => {
+                    if streamed_any {
+                        println!();
+                        streamed_any = false;
+                    }
+                    TuiRenderer::print_thinking(s);
                 }
-                TuiRenderer::print_thinking(s);
-            }
-            AgentEvent::Token(s) => {
-                print!("{}", s);
-                let _ = std::io::stdout().flush();
-                streamed_any = true;
-            }
-            AgentEvent::ToolStart { name, args } => {
-                if streamed_any {
-                    println!();
-                    streamed_any = false;
+                AgentEvent::Token(s) => {
+                    print!("{}", s);
+                    let _ = std::io::stdout().flush();
+                    streamed_any = true;
                 }
-                TuiRenderer::print_tool_start(name, args);
-            }
-            AgentEvent::ToolEnd { name, success, output } => TuiRenderer::print_tool_end(name, success, output),
-            AgentEvent::TestResult { command, passed, output } => TuiRenderer::print_test_result(command, passed, output),
-            AgentEvent::Done { files_modified, tools_called, .. } => {
-                if streamed_any {
-                    println!();
-                    streamed_any = false;
+                AgentEvent::ToolStart { name, args } => {
+                    if streamed_any {
+                        println!();
+                        streamed_any = false;
+                    }
+                    TuiRenderer::print_tool_start(name, args);
                 }
-                if !files_modified.is_empty() {
-                    TuiRenderer::print_success(&format!("Modified: {}", files_modified.join(", ")));
-                } else if tools_called > 0 {
-                    TuiRenderer::print_success("Task executed successfully.");
+                AgentEvent::ToolEnd {
+                    name,
+                    success,
+                    output,
+                } => TuiRenderer::print_tool_end(name, success, output),
+                AgentEvent::TestResult {
+                    command,
+                    passed,
+                    output,
+                } => TuiRenderer::print_test_result(command, passed, output),
+                AgentEvent::Done {
+                    files_modified,
+                    tools_called,
+                    ..
+                } => {
+                    if streamed_any {
+                        println!();
+                        streamed_any = false;
+                    }
+                    if !files_modified.is_empty() {
+                        TuiRenderer::print_success(&format!(
+                            "Modified: {}",
+                            files_modified.join(", ")
+                        ));
+                    } else if tools_called > 0 {
+                        TuiRenderer::print_success("Task executed successfully.");
+                    }
                 }
-            }
-            AgentEvent::Error(err) => {
-                if streamed_any {
-                    println!();
-                    streamed_any = false;
+                AgentEvent::Error(err) => {
+                    if streamed_any {
+                        println!();
+                        streamed_any = false;
+                    }
+                    TuiRenderer::print_error(err);
                 }
-                TuiRenderer::print_error(err);
-            }
-        }).await;
+            })
+            .await;
 
         match res {
             Ok(summary) => {

@@ -1,0 +1,41 @@
+{
+  "timestamp": 1792136083,
+  "acode_binary": "F:\\projects\\Atlas-Research-Labs\\Atlas-Daedalus\\target\\release\\acode.exe",
+  "total_tasks": 4,
+  "passed_tasks": 0,
+  "pass_rate_percent": 0.0,
+  "tasks": [
+    {
+      "id": "SWE-01",
+      "name": "Rust String Slice Boundary Bug",
+      "passed": false,
+      "duration_ms": 3463,
+      "acode_exit_code": 0,
+      "verification_output": "running 1 test\ntest tests::test_truncate_multibyte ... FAILED\n\nfailures:\n\n---- tests::test_truncate_multibyte stdout ----\n\nthread 'tests::test_truncate_multibyte' (21396) panicked at src\\lib.rs:2:7:\nend byte index 8 is not a char boundary; it is inside '\u4e16' (bytes 7..10 of string)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::test_truncate_multibyte\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Compiling slice_test v0.1.0 (C:\\Users\\HP\\AppData\\Local\\Temp\\acode_eval_SWE-01_m6sl7v0y)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.21s\n     Running unittests src\\lib.rs (target\\debug\\deps\\slice_test-33e742a082674cf4.exe)\nerror: test failed, to rerun pass `--lib`"
+    },
+    {
+      "id": "SWE-02",
+      "name": "Python JSON Key Renamer",
+      "passed": false,
+      "duration_ms": 2438,
+      "acode_exit_code": 0,
+      "verification_output": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'output.json'"
+    },
+    {
+      "id": "SWE-03",
+      "name": "Node Package Version Bump",
+      "passed": false,
+      "duration_ms": 2970,
+      "acode_exit_code": 0,
+      "verification_output": ""
+    },
+    {
+      "id": "TERM-01",
+      "name": "Log Aggregator Shell Command",
+      "passed": false,
+      "duration_ms": 3469,
+      "acode_exit_code": 0,
+      "verification_output": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: '404_summary.txt'"
+    }
+  ]
+}

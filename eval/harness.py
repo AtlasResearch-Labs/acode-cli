@@ -51,6 +51,11 @@ def run_task(task, acode_bin, timeout_secs=180):
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
+        # Copy workspace .env if present
+        workspace_env = Path(__file__).resolve().parent.parent / ".env"
+        if workspace_env.exists():
+            shutil.copy(workspace_env, Path(temp_dir) / ".env")
+
         # Run acode non-interactively
         start_time = time.time()
         cmd = [acode_bin, "--security", "full", prompt]

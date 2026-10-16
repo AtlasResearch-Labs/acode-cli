@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::agent::tester::SelfHealingVerifier;
+use crate::agent::planner::TaskGraph;
 use crate::context::compressor::{ChatMessage, TrajectoryCompressor};
 use crate::context::memory::MemoryEngine;
 use crate::providers::router::ProviderRouter;
@@ -34,6 +35,7 @@ pub struct DaedalusOrchestrator {
     pub verifier: SelfHealingVerifier,
     pub compressor: TrajectoryCompressor,
     pub security: PermissionGate,
+    pub task_graph: Option<TaskGraph>,
     pub history: Vec<LLMMessage>,
     pub session_diffs: Vec<(String, String)>,
 }
@@ -55,6 +57,7 @@ impl DaedalusOrchestrator {
             verifier: SelfHealingVerifier::new(&p),
             compressor: TrajectoryCompressor::new(60000),
             security: PermissionGate::new(override_security),
+            task_graph: None,
             history: Vec::new(),
             session_diffs: Vec::new(),
             workspace_root: p,
@@ -77,18 +80,21 @@ impl DaedalusOrchestrator {
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory.\n\
-               - web_search: Multi-source web search across DuckDuckGo, HackerNews, and tech discussions.\n\
-               - web_fetch: Extract readable Markdown from any URL, Reddit thread (.json), arXiv paper, or YouTube video transcript.\n\
-               - run_tests: Run automated project test suites to verify modifications.\n\
-               - list_workspaces: Discover and list sibling workspaces in the parent folder.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, scaffold_test.\n\
+               - web_search & web_fetch: Multi-source web search and clean markdown extraction.\n\
+               - manage_dependencies: Direct interface to Cargo, NPM, PNPM, Bun, Yarn, Pip, and Go.\n\
+               - manage_containers: Docker/Podman container status, logs, and compose up/down.\n\
+               - extract_symbols & find_symbols: Structural code symbol navigation across files.\n\
+               - rename_symbol: Semantic cross-file identifier refactoring.\n\
+               - scaffold_test: Proactively generate unit test scaffolds for source files.\n\
                - update_memory: Record persistent user preferences (~/.daedalus/USER.md) or project architectural learnings (.daedalus/MEMORY.md).\n\n\
-            WORKSPACE ROOT: {}\n{}",
+            WORKSPACE ROOT: {}\n{}{}",
             sec_mode,
             self.workspace_root.display(),
             sec_mode,
             self.workspace_root.display(),
-            if mem.is_empty() { String::new() } else { format!("\nPROJECT MEMORY:\n{}", mem) }
+            if mem.is_empty() { String::new() } else { format!("\nPROJECT MEMORY:\n{}", mem) },
+            if let Some(graph) = &self.task_graph { format!("\n\n[ACTIVE GOAL DECOMPOSITION GRAPH]\n{}", graph.render_progress()) } else { String::new() }
         )
     }
 
@@ -373,8 +379,9 @@ impl DaedalusOrchestrator {
 
         // Run self-healing verifier if files were modified
         if !files_modified.is_empty() {
-            on_event(AgentEvent::Thinking("Running verification test suite..."));
-            let mut verify_res = self.verifier.run_verification().await;
+            let modified_list: Vec<String> = files_modified.iter().cloned().collect();
+            on_event(AgentEvent::Thinking("Running targeted verification test suite..."));
+            let mut verify_res = self.verifier.run_targeted_verification(&modified_list).await;
 
             if verify_res.has_tests {
                 let cmd_str = verify_res.command.as_deref().unwrap_or("").to_string();
@@ -429,7 +436,7 @@ impl DaedalusOrchestrator {
                     }
 
                     // Re-verify after repair tools executed
-                    verify_res = self.verifier.run_verification().await;
+                    verify_res = self.verifier.run_targeted_verification(&modified_list).await;
                     on_event(AgentEvent::TestResult {
                         command: &cmd_str,
                         passed: verify_res.passed,

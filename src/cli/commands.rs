@@ -675,6 +675,279 @@ impl SlashCommandHandler {
                 }
                 true
             }
+            "/deps" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() {
+                    match orchestrator.tools.deps.list_dependencies(&orchestrator.workspace_root) {
+                        Ok(list) => {
+                            let eco = orchestrator.tools.deps.detect_ecosystem(&orchestrator.workspace_root)
+                                .map(|e| e.as_str())
+                                .unwrap_or("unknown");
+                            println!("\n{}[PROJECT DEPENDENCIES ({})]{} (Total: {})", TuiRenderer::BOLD, eco, TuiRenderer::RESET, list.len());
+                            if list.is_empty() {
+                                println!("  No direct dependencies found in manifest.");
+                            } else {
+                                for d in list {
+                                    let dev_str = if d.is_dev { format!("{}[dev]{}", TuiRenderer::DIM, TuiRenderer::RESET) } else { String::new() };
+                                    println!("  - {}{}{} @ {} {}", TuiRenderer::CYAN, d.name, TuiRenderer::RESET, d.version, dev_str);
+                                }
+                            }
+                            println!("\nCommands: /deps add <pkg> | /deps rm <pkg> | /deps audit\n");
+                        }
+                        Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                    }
+                } else {
+                    match parts[0].to_lowercase().as_str() {
+                        "add" => {
+                            if parts.len() < 2 {
+                                println!("{}Usage: /deps add <package_name> [--dev]{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            } else {
+                                let pkg = parts[1];
+                                let is_dev = parts.contains(&"--dev") || parts.contains(&"-D");
+                                println!("{}[ACODE] Installing dependency '{}'...{}", TuiRenderer::DIM, pkg, TuiRenderer::RESET);
+                                match orchestrator.tools.deps.add_dependency(&orchestrator.workspace_root, pkg, None, is_dev) {
+                                    Ok(out) => println!("{}[OK] Installed '{}':\n{}{}\n", TuiRenderer::GREEN, pkg, out, TuiRenderer::RESET),
+                                    Err(e) => println!("{}[FAIL] Installation failed: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                                }
+                            }
+                        }
+                        "remove" | "rm" => {
+                            if parts.len() < 2 {
+                                println!("{}Usage: /deps rm <package_name>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            } else {
+                                let pkg = parts[1];
+                                println!("{}[ACODE] Removing dependency '{}'...{}", TuiRenderer::DIM, pkg, TuiRenderer::RESET);
+                                match orchestrator.tools.deps.remove_dependency(&orchestrator.workspace_root, pkg) {
+                                    Ok(out) => println!("{}[OK] Removed '{}':\n{}{}\n", TuiRenderer::GREEN, pkg, out, TuiRenderer::RESET),
+                                    Err(e) => println!("{}[FAIL] Removal failed: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                                }
+                            }
+                        }
+                        "audit" => {
+                            println!("{}[ACODE] Running ecosystem security audit...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                            match orchestrator.tools.deps.audit_dependencies(&orchestrator.workspace_root) {
+                                Ok(out) => println!("\n{}[AUDIT RESULTS]{}\n{}\n", TuiRenderer::BOLD, TuiRenderer::RESET, out),
+                                Err(e) => println!("{}[FAIL] Audit error: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                            }
+                        }
+                        _ => {
+                            println!("{}Usage: /deps [add <pkg> | rm <pkg> | audit]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                        }
+                    }
+                }
+                true
+            }
+            "/docker" | "/container" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() || parts[0].eq_ignore_ascii_case("ps") || parts[0].eq_ignore_ascii_case("list") {
+                    match orchestrator.tools.containers.list_containers(true) {
+                        Ok(list) => {
+                            println!("\n{}[CONTAINER FLEET STATUS]{} (Total: {})", TuiRenderer::BOLD, TuiRenderer::RESET, list.len());
+                            if list.is_empty() {
+                                println!("  No containers found.");
+                            } else {
+                                for c in list {
+                                    let state_badge = if c.state == "running" {
+                                        format!("{}[RUNNING]{}", TuiRenderer::GREEN, TuiRenderer::RESET)
+                                    } else {
+                                        format!("{}[{}]{}", TuiRenderer::DIM, c.state, TuiRenderer::RESET)
+                                    };
+                                    println!("  - {}{}{} ({}) | Image: {} | {}", TuiRenderer::CYAN, c.id, TuiRenderer::RESET, c.name, c.image, state_badge);
+                                    if !c.ports.is_empty() {
+                                        println!("    Ports: {}", c.ports);
+                                    }
+                                }
+                            }
+                            println!("\nCommands: /docker logs <id> | /docker up | /docker down | /docker inspect <id>\n");
+                        }
+                        Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                    }
+                } else {
+                    match parts[0].to_lowercase().as_str() {
+                        "status" => {
+                            match orchestrator.tools.containers.check_status() {
+                                Ok(s) => println!("\n{}[OK]{} {}\n", TuiRenderer::GREEN, TuiRenderer::RESET, s),
+                                Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                            }
+                        }
+                        "logs" => {
+                            if parts.len() < 2 {
+                                println!("{}Usage: /docker logs <id_or_name>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            } else {
+                                let target = parts[1];
+                                match orchestrator.tools.containers.get_logs(target, 40) {
+                                    Ok(logs) => println!("\n{}[LOGS: {}]{}\n{}\n", TuiRenderer::BOLD, target, TuiRenderer::RESET, logs),
+                                    Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                                }
+                            }
+                        }
+                        "inspect" => {
+                            if parts.len() < 2 {
+                                println!("{}Usage: /docker inspect <id_or_name>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                            } else {
+                                let target = parts[1];
+                                match orchestrator.tools.containers.inspect_container(target) {
+                                    Ok(info) => println!("\n{}[INSPECT: {}]{}\n{}\n", TuiRenderer::BOLD, target, TuiRenderer::RESET, info),
+                                    Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                                }
+                            }
+                        }
+                        "up" => {
+                            println!("{}[ACODE] Launching compose cluster in background...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                            match orchestrator.tools.containers.compose_up(&orchestrator.workspace_root) {
+                                Ok(out) => println!("{}[OK] Compose up:\n{}{}\n", TuiRenderer::GREEN, out, TuiRenderer::RESET),
+                                Err(e) => println!("{}[FAIL] Compose up failed: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                            }
+                        }
+                        "down" => {
+                            println!("{}[ACODE] Stopping compose cluster...{}", TuiRenderer::DIM, TuiRenderer::RESET);
+                            match orchestrator.tools.containers.compose_down(&orchestrator.workspace_root) {
+                                Ok(out) => println!("{}[OK] Compose down:\n{}{}\n", TuiRenderer::GREEN, out, TuiRenderer::RESET),
+                                Err(e) => println!("{}[FAIL] Compose down failed: {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                            }
+                        }
+                        _ => {
+                            println!("{}Usage: /docker [ps | logs <id> | inspect <id> | up | down | status]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                        }
+                    }
+                }
+                true
+            }
+            "/symbols" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() {
+                    println!("{}Usage: /symbols <file_path> | /symbols find <name>{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                } else if parts[0].eq_ignore_ascii_case("find") {
+                    if parts.len() < 2 {
+                        println!("{}Usage: /symbols find <identifier_name>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                    } else {
+                        let name = parts[1];
+                        let matches = orchestrator.tools.symbols.find_symbol_definitions(name);
+                        println!("\n{}[SYMBOL DEFINITIONS: '{}']{} (Matches: {})", TuiRenderer::BOLD, name, TuiRenderer::RESET, matches.len());
+                        if matches.is_empty() {
+                            println!("  No definitions found.");
+                        } else {
+                            for m in matches {
+                                let pub_badge = if m.is_public { format!("{}[pub]{}", TuiRenderer::GREEN, TuiRenderer::RESET) } else { String::new() };
+                                println!("  - {}:{}: {}{} {}", m.file_path, m.line_number, TuiRenderer::CYAN, m.signature, pub_badge);
+                            }
+                        }
+                        println!();
+                    }
+                } else {
+                    let file_path = orchestrator.workspace_root.join(parts[0]);
+                    match orchestrator.tools.symbols.extract_symbols_from_file(&file_path) {
+                        Ok(syms) => {
+                            println!("\n{}[SYMBOLS: {}]{} (Total: {})", TuiRenderer::BOLD, parts[0], TuiRenderer::RESET, syms.len());
+                            if syms.is_empty() {
+                                println!("  No symbol declarations found.");
+                            } else {
+                                for s in syms {
+                                    let pub_badge = if s.is_public { format!("{}[pub]{}", TuiRenderer::GREEN, TuiRenderer::RESET) } else { String::new() };
+                                    println!("  L{:4} | {:9} | {}{}{} {}", s.line_number, s.kind, TuiRenderer::CYAN, s.name, TuiRenderer::RESET, pub_badge);
+                                }
+                            }
+                            println!();
+                        }
+                        Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                    }
+                }
+                true
+            }
+            "/rename" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.len() < 2 {
+                    println!("{}Usage: /rename <old_identifier> <new_identifier> [path_filter]{}\n  Example: /rename EngineContext ExecutionContext src/\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    return true;
+                }
+                let old_name = parts[0];
+                let new_name = parts[1];
+                let filter = if parts.len() > 2 { Some(parts[2]) } else { None };
+
+                match orchestrator.tools.symbols.rename_symbol(old_name, new_name, filter) {
+                    Ok(modified) => {
+                        if modified.is_empty() {
+                            println!("{}[INFO] Identifier '{}' not found in workspace.{}\n", TuiRenderer::YELLOW, old_name, TuiRenderer::RESET);
+                        } else {
+                            let total_occ: usize = modified.iter().map(|(_, c)| *c).sum();
+                            println!("\n{}[RENAME COMPLETE]{} '{}' -> '{}' ({} replacements in {} files)", TuiRenderer::BOLD, TuiRenderer::RESET, old_name, new_name, total_occ, modified.len());
+                            for (file, count) in modified {
+                                println!("  {}[MODIFIED]{} {} ({} tokens)", TuiRenderer::GREEN, TuiRenderer::RESET, file, count);
+                            }
+                            println!();
+                        }
+                    }
+                    Err(e) => println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET),
+                }
+                true
+            }
+            "/tasks" => {
+                match &orchestrator.task_graph {
+                    Some(graph) => {
+                        println!("\n{}[ACTIVE GOAL DECOMPOSITION GRAPH]{}\n{}\n", TuiRenderer::BOLD, TuiRenderer::RESET, graph.render_progress());
+                    }
+                    None => {
+                        println!("{}No active task graph. Create one using: /task new <goal>{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
+            "/task" => {
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.is_empty() {
+                    println!("{}Usage: /task [new <goal> | add <step_title> | done | fail <reason> | clear]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    return true;
+                }
+                let sub = parts[0].to_lowercase();
+                match sub.as_str() {
+                    "new" => {
+                        let goal = parts[1..].join(" ");
+                        if goal.is_empty() {
+                            println!("{}Usage: /task new <goal summary>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                        } else {
+                            orchestrator.task_graph = Some(crate::agent::planner::TaskGraph::new(&goal));
+                            println!("{}[OK] Initialized task graph for goal: '{}'{}\nAdd steps via: /task add <step_title>\n", TuiRenderer::GREEN, goal, TuiRenderer::RESET);
+                        }
+                    }
+                    "add" => {
+                        let step = parts[1..].join(" ");
+                        if step.is_empty() {
+                            println!("{}Usage: /task add <step title>{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                        } else {
+                            if orchestrator.task_graph.is_none() {
+                                orchestrator.task_graph = Some(crate::agent::planner::TaskGraph::new("Active Task Sequence"));
+                            }
+                            if let Some(graph) = orchestrator.task_graph.as_mut() {
+                                let id = graph.add_step(&step, "");
+                                println!("{}[OK] Added step {}: '{}'{}\n", TuiRenderer::GREEN, id, step, TuiRenderer::RESET);
+                            }
+                        }
+                    }
+                    "done" | "next" => {
+                        if let Some(graph) = orchestrator.task_graph.as_mut() {
+                            graph.complete_current();
+                            println!("\n{}[STEP ADVANCED]{}\n{}\n", TuiRenderer::BOLD, TuiRenderer::RESET, graph.render_progress());
+                        } else {
+                            println!("{}No active task graph. Create one via: /task new <goal>{}\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
+                        }
+                    }
+                    "fail" => {
+                        let reason = parts[1..].join(" ");
+                        if let Some(graph) = orchestrator.task_graph.as_mut() {
+                            graph.fail_current(if reason.is_empty() { "Manual failure mark" } else { &reason });
+                            println!("{}[WARN] Current step marked failed. Re-planning or repair suggested.{}\n", TuiRenderer::YELLOW, TuiRenderer::RESET);
+                        }
+                    }
+                    "clear" | "reset" => {
+                        orchestrator.task_graph = None;
+                        println!("{}[OK] Cleared active task graph.{}\n", TuiRenderer::GREEN, TuiRenderer::RESET);
+                    }
+                    _ => {
+                        println!("{}Usage: /task [new <goal> | add <step> | done | fail <reason> | clear]{}\n", TuiRenderer::CYAN, TuiRenderer::RESET);
+                    }
+                }
+                true
+            }
             "/exit" | "/quit" => {
                 println!("\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 std::process::exit(0);
@@ -714,6 +987,12 @@ impl SlashCommandHandler {
         println!("  {}/blackbox{}        - View BlackBox flight recorder telemetry & audit stream", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/daemons{}         - List and inspect background process daemons", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/daemon <action>{} - Manage daemon (logs <id>, kill <id>, start <cmd>)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/deps [action]{}   - Cross-ecosystem package manager (list, add, rm, audit)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/docker [action]{} - Container fleet manager (ps, logs, inspect, up, down)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/symbols <path>{}  - Extract all symbols or find symbol definition (/symbols find <name>)", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/rename <o> <n>{}  - Semantic identifier renaming across workspace", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/tasks{}           - View active goal decomposition task graph and checklist", TuiRenderer::CYAN, TuiRenderer::RESET);
+        println!("  {}/task <action>{}   - Manage task graph (new <goal>, add <step>, done, clear)", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/info{}            - Display active workspace root, git branch, and context", TuiRenderer::CYAN, TuiRenderer::RESET);
         println!("  {}/cd <path|@alias>{} - Switch active workspace root directory", TuiRenderer::CYAN, TuiRenderer::RESET);

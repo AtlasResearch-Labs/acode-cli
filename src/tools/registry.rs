@@ -10,6 +10,9 @@ use crate::tools::git::GitTools;
 use crate::tools::pillars::PillarTools;
 use crate::tools::web::WebTools;
 use crate::tools::daemon::DaemonRegistry;
+use crate::tools::deps::DependencyManager;
+use crate::tools::container::ContainerManager;
+use crate::tools::symbols::SymbolEngine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -25,6 +28,9 @@ pub struct ToolRegistry {
     pub pillars: PillarTools,
     pub web: WebTools,
     pub daemons: DaemonRegistry,
+    pub deps: DependencyManager,
+    pub containers: ContainerManager,
+    pub symbols: SymbolEngine,
     pub workspace_root: std::path::PathBuf,
 }
 
@@ -38,6 +44,9 @@ impl ToolRegistry {
             pillars: PillarTools::new(&p),
             web: WebTools::new(),
             daemons: DaemonRegistry::new(),
+            deps: DependencyManager::new(&p),
+            containers: ContainerManager::new(),
+            symbols: SymbolEngine::new(&p),
             workspace_root: p,
         }
     }
@@ -271,6 +280,88 @@ impl ToolRegistry {
                         "id": { "type": "string", "description": "Daemon ID (e.g. 'd_01')" }
                     },
                     "required": ["id"]
+                }),
+            },
+            ToolDefinition {
+                name: "manage_dependencies".to_string(),
+                description: "Cross-ecosystem dependency management for Cargo, NPM, PNPM, Bun, Yarn, Pip, UV, Poetry, and GoMod. List, add, remove, or audit project dependencies.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["list", "add", "remove", "audit"],
+                            "description": "Action to execute"
+                        },
+                        "package": { "type": "string", "description": "Package name (for add/remove)" },
+                        "version": { "type": "string", "description": "Package version specifier (optional)" },
+                        "is_dev": { "type": "boolean", "description": "Install as dev dependency (optional)" }
+                    },
+                    "required": ["action"]
+                }),
+            },
+            ToolDefinition {
+                name: "manage_containers".to_string(),
+                description: "Direct control over Docker and Podman container lifecycles, log streaming, status discovery, and compose orchestration.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["status", "list", "logs", "inspect", "compose_up", "compose_down", "stop", "restart"],
+                            "description": "Container action to execute"
+                        },
+                        "target": { "type": "string", "description": "Container ID or name (for logs, inspect, stop, restart)" },
+                        "lines": { "type": "integer", "description": "Number of log lines to retrieve (default: 30)" }
+                    },
+                    "required": ["action"]
+                }),
+            },
+            ToolDefinition {
+                name: "extract_symbols".to_string(),
+                description: "Extract function, struct, class, trait, interface, and enum symbols from a source file (Rust, TypeScript/JavaScript, Python, Go) with line numbers and signatures.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative file path" }
+                    },
+                    "required": ["path"]
+                }),
+            },
+            ToolDefinition {
+                name: "find_symbols".to_string(),
+                description: "Search workspace source tree to locate symbol definitions matching a specific identifier name.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Symbol/identifier name to find" }
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
+                name: "rename_symbol".to_string(),
+                description: "Safely rename an identifier across matching workspace files using word-boundary tokens, avoiding comment and string false positives.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "old_name": { "type": "string", "description": "Existing identifier name" },
+                        "new_name": { "type": "string", "description": "New identifier name" },
+                        "path_filter": { "type": "string", "description": "Optional substring path filter to limit affected files" }
+                    },
+                    "required": ["old_name", "new_name"]
+                }),
+            },
+            ToolDefinition {
+                name: "scaffold_test".to_string(),
+                description: "Proactively generate an idiomatic unit test scaffold for a source file (Rust, TypeScript/JavaScript, Python, Go).".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative source file path" },
+                        "write_to_file": { "type": "boolean", "description": "If true, writes scaffold directly to test destination file (optional)" }
+                    },
+                    "required": ["path"]
                 }),
             },
         ]
@@ -510,6 +601,239 @@ impl ToolRegistry {
                 match self.daemons.kill_daemon(id) {
                     Ok(true) => (true, format!("[DAEMON KILLED] Process '{}' terminated.", id)),
                     Ok(false) => (false, format!("Daemon '{}' was not active.", id)),
+                    Err(e) => (false, e),
+                }
+            }
+            "manage_dependencies" => {
+                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+                let package = args.get("package").and_then(|v| v.as_str()).unwrap_or("");
+                let version = args.get("version").and_then(|v| v.as_str());
+                let is_dev = args.get("is_dev").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                match action {
+                    "list" => {
+                        match self.deps.list_dependencies(&self.workspace_root) {
+                            Ok(list) => {
+                                if list.is_empty() {
+                                    (true, "[DEPENDENCIES] No direct dependencies detected in project manifest.".to_string())
+                                } else {
+                                    let mut out = format!("[PROJECT DEPENDENCIES (Total: {})]\n\n", list.len());
+                                    for dep in &list {
+                                        let badge = if dep.is_dev { " (dev)" } else { "" };
+                                        out.push_str(&format!("  - {}: {}{}\n", dep.name, dep.version, badge));
+                                    }
+                                    (true, out)
+                                }
+                            }
+                            Err(e) => (false, e),
+                        }
+                    }
+                    "add" => {
+                        if package.is_empty() {
+                            (false, "Package name required for 'add' action.".to_string())
+                        } else {
+                            match self.deps.add_dependency(&self.workspace_root, package, version, is_dev) {
+                                Ok(out) => (true, format!("[DEPENDENCY ADDED] {}\n{}", package, out)),
+                                Err(e) => (false, format!("Failed to add dependency '{}': {}", package, e)),
+                            }
+                        }
+                    }
+                    "remove" => {
+                        if package.is_empty() {
+                            (false, "Package name required for 'remove' action.".to_string())
+                        } else {
+                            match self.deps.remove_dependency(&self.workspace_root, package) {
+                                Ok(out) => (true, format!("[DEPENDENCY REMOVED] {}\n{}", package, out)),
+                                Err(e) => (false, format!("Failed to remove dependency '{}': {}", package, e)),
+                            }
+                        }
+                    }
+                    "audit" => {
+                        match self.deps.audit_dependencies(&self.workspace_root) {
+                            Ok(out) => (true, format!("[DEPENDENCY AUDIT]\n{}", out)),
+                            Err(e) => (false, format!("Audit error: {}", e)),
+                        }
+                    }
+                    _ => (false, format!("Unknown dependency action: '{}'. Use list, add, remove, or audit.", action)),
+                }
+            }
+            "manage_containers" => {
+                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+                let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                let lines = args.get("lines").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(30);
+
+                match action {
+                    "status" => {
+                        match self.containers.check_status() {
+                            Ok(s) => (true, format!("[CONTAINER STATUS] {}", s)),
+                            Err(e) => (false, format!("[CONTAINER STATUS ERROR] {}", e)),
+                        }
+                    }
+                    "list" => {
+                        match self.containers.list_containers(true) {
+                            Ok(list) => {
+                                if list.is_empty() {
+                                    (true, "[CONTAINERS] Zero active or stopped containers found.".to_string())
+                                } else {
+                                    let mut out = format!("[CONTAINERS (Total: {})]\n\n", list.len());
+                                    for c in &list {
+                                        out.push_str(&format!("  - [{}] {} | Image: {} | State: {} | Ports: {}\n", c.id, c.name, c.image, c.state, c.ports));
+                                    }
+                                    (true, out)
+                                }
+                            }
+                            Err(e) => (false, format!("Failed to list containers: {}", e)),
+                        }
+                    }
+                    "logs" => {
+                        if target.is_empty() {
+                            (false, "Target container ID or name required for 'logs'.".to_string())
+                        } else {
+                            match self.containers.get_logs(target, lines) {
+                                Ok(l) => (true, format!("[CONTAINER LOGS: {} (Last {} lines)]\n\n{}", target, lines, l)),
+                                Err(e) => (false, format!("Failed to get logs for '{}': {}", target, e)),
+                            }
+                        }
+                    }
+                    "inspect" => {
+                        if target.is_empty() {
+                            (false, "Target container ID or name required for 'inspect'.".to_string())
+                        } else {
+                            match self.containers.inspect_container(target) {
+                                Ok(info) => (true, format!("[CONTAINER INSPECT: {}]\n{}", target, info)),
+                                Err(e) => (false, format!("Inspect failed: {}", e)),
+                            }
+                        }
+                    }
+                    "compose_up" => {
+                        match self.containers.compose_up(&self.workspace_root) {
+                            Ok(out) => (true, format!("[COMPOSE UP]\n{}", out)),
+                            Err(e) => (false, format!("Compose up failed: {}", e)),
+                        }
+                    }
+                    "compose_down" => {
+                        match self.containers.compose_down(&self.workspace_root) {
+                            Ok(out) => (true, format!("[COMPOSE DOWN]\n{}", out)),
+                            Err(e) => (false, format!("Compose down failed: {}", e)),
+                        }
+                    }
+                    "stop" => {
+                        if target.is_empty() {
+                            (false, "Target container required for 'stop'.".to_string())
+                        } else {
+                            match self.containers.stop_container(target) {
+                                Ok(out) => (true, format!("[CONTAINER STOPPED: {}]\n{}", target, out)),
+                                Err(e) => (false, format!("Stop failed: {}", e)),
+                            }
+                        }
+                    }
+                    "restart" => {
+                        if target.is_empty() {
+                            (false, "Target container required for 'restart'.".to_string())
+                        } else {
+                            match self.containers.restart_container(target) {
+                                Ok(out) => (true, format!("[CONTAINER RESTARTED: {}]\n{}", target, out)),
+                                Err(e) => (false, format!("Restart failed: {}", e)),
+                            }
+                        }
+                    }
+                    _ => (false, format!("Unknown container action: '{}'", action)),
+                }
+            }
+            "extract_symbols" => {
+                let path = args.get("path")
+                    .or_else(|| args.get("file"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                let target_path = self.workspace_root.join(path);
+                match self.symbols.extract_symbols_from_file(&target_path) {
+                    Ok(list) => {
+                        if list.is_empty() {
+                            (true, format!("[SYMBOLS: {}] No symbols recognized.", path))
+                        } else {
+                            let mut out = format!("[SYMBOLS: {} (Total: {})]\n\n", path, list.len());
+                            for s in &list {
+                                let pub_badge = if s.is_public { "pub " } else { "" };
+                                out.push_str(&format!("  L{:4} | {:9} | {}{}\n", s.line_number, s.kind, pub_badge, s.name));
+                            }
+                            (true, out)
+                        }
+                    }
+                    Err(e) => (false, e),
+                }
+            }
+            "find_symbols" => {
+                let name_to_find = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if name_to_find.is_empty() {
+                    (false, "Symbol name required for 'find_symbols'.".to_string())
+                } else {
+                    let list = self.symbols.find_symbol_definitions(name_to_find);
+                    if list.is_empty() {
+                        (true, format!("[SYMBOL SEARCH] No definitions found for '{}'.", name_to_find))
+                    } else {
+                        let mut out = format!("[SYMBOL SEARCH: '{}' (Matches: {})]\n\n", name_to_find, list.len());
+                        for s in &list {
+                            out.push_str(&format!("  - {} (Line {}): {}\n", s.file_path, s.line_number, s.signature));
+                        }
+                        (true, out)
+                    }
+                }
+            }
+            "rename_symbol" => {
+                let old_name = args.get("old_name").and_then(|v| v.as_str()).unwrap_or("");
+                let new_name = args.get("new_name").and_then(|v| v.as_str()).unwrap_or("");
+                let path_filter = args.get("path_filter").and_then(|v| v.as_str());
+
+                match self.symbols.rename_symbol(old_name, new_name, path_filter) {
+                    Ok(modified) => {
+                        if modified.is_empty() {
+                            (true, format!("[RENAME] Symbol '{}' not found in any matched source files.", old_name))
+                        } else {
+                            let total_occ: usize = modified.iter().map(|(_, c)| *c).sum();
+                            let mut out = format!("[RENAME SUCCESS: '{}' -> '{}' ({} replacements in {} files)]\n\n", old_name, new_name, total_occ, modified.len());
+                            for (file, count) in &modified {
+                                out.push_str(&format!("  - {}: {} occurrences replaced\n", file, count));
+                            }
+                            (true, out)
+                        }
+                    }
+                    Err(e) => (false, format!("Rename failed: {}", e)),
+                }
+            }
+            "scaffold_test" => {
+                let path = args.get("path")
+                    .or_else(|| args.get("file"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let write_to_file = args.get("write_to_file").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                match crate::agent::tester::SelfHealingVerifier::scaffold_test(&self.workspace_root, path) {
+                    Ok((test_file, code)) => {
+                        if write_to_file {
+                            let target_p = self.workspace_root.join(&test_file);
+                            if let Some(parent) = target_p.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            if target_p.exists() && test_file == path {
+                                // Append for Rust inline test module
+                                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&target_p) {
+                                    use std::io::Write;
+                                    let _ = writeln!(f, "{}", code);
+                                    (true, format!("[TEST SCAFFOLD APPENDED] Added unit test module to {}", test_file))
+                                } else {
+                                    (false, format!("Failed to append to {}", test_file))
+                                }
+                            } else {
+                                match std::fs::write(&target_p, &code) {
+                                    Ok(_) => (true, format!("[TEST SCAFFOLD CREATED] Wrote test suite to {}", test_file)),
+                                    Err(e) => (false, format!("Failed to write test file: {}", e)),
+                                }
+                            }
+                        } else {
+                            (true, format!("[TEST SCAFFOLD FOR: {} (Target: {})]\n\n{}", path, test_file, code))
+                        }
+                    }
                     Err(e) => (false, e),
                 }
             }

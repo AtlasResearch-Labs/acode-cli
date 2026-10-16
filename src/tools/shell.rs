@@ -51,10 +51,17 @@ impl ShellTools {
             c
         } else {
             // Check if bubblewrap sandbox containment is available on Linux host
-            let bwrap_available =
-                !cfg!(target_os = "android") && Path::new("/usr/bin/bwrap").exists();
-            if bwrap_available {
-                let mut c = Command::new("/usr/bin/bwrap");
+            let bwrap_bin = if !cfg!(target_os = "android") {
+                ["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"]
+                    .iter()
+                    .find(|p| Path::new(p).exists())
+                    .map(|p| (*p).to_string())
+            } else {
+                None
+            };
+
+            if let Some(bwrap) = bwrap_bin {
+                let mut c = Command::new(bwrap);
                 let ws_str = self.workspace_root.to_string_lossy().to_string();
                 c.arg("--ro-bind")
                     .arg("/")

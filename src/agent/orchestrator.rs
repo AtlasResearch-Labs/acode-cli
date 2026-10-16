@@ -128,12 +128,13 @@ impl DaedalusOrchestrator {
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify or create code, always verify it! If the workspace contains test files or scripts (e.g. test.js, tests/, Cargo.toml, pytest), run them (using run_command e.g. 'node test.js' or 'cargo test') to verify that your implementation satisfies all test assertions. If errors occur, inspect compiler/test output and self-heal before concluding.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, scaffold_test, manage_sandbox.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, repo_map, scaffold_test, manage_sandbox.\n\
                - web_search & web_fetch: Multi-source web search and clean markdown extraction.\n\
                - manage_dependencies: Direct interface to Cargo, NPM, PNPM, Bun, Yarn, Pip, and Go.\n\
                - manage_containers: Docker/Podman container status, logs, and compose up/down.\n\
                - extract_symbols & find_symbols: Structural code symbol navigation across files.\n\
                - rename_symbol: Semantic cross-file identifier refactoring.\n\
+               - repo_map: High-density Tree-sitter AST repository map indexing symbols, callsites, and imports.\n\
                - scaffold_test: Proactively generate unit test scaffolds for source files.\n\
                - manage_sandbox: Creates and merges isolated shadow git worktrees in .daedalus/shadow/ for risk-free code refactoring and experimentation.\n\
                - update_memory: Record persistent user preferences (~/.daedalus/USER.md) or project architectural learnings (.daedalus/MEMORY.md).\n\
@@ -289,7 +290,10 @@ impl DaedalusOrchestrator {
         let max_turns = 25;
         let mut final_summary = String::new();
         let mut total_tools_called = 0;
-        let think_re = regex::Regex::new(r"(?s)<think>.*?</think>").ok();
+        let think_re =
+            regex::Regex::new(r"(?s)<(think|thought|reasoning)>.*?</(think|thought|reasoning)>")
+                .ok();
+        let open_re = regex::Regex::new(r"(?s)<(think|thought|reasoning)>.*$").ok();
 
         while turns < max_turns {
             turns += 1;
@@ -330,11 +334,17 @@ impl DaedalusOrchestrator {
             let res = self
                 .provider
                 .complete_stream(&self.history, &tool_defs, |token| {
-                    if token.contains("<think>") {
+                    if token.contains("<think>")
+                        || token.contains("<thought>")
+                        || token.contains("<reasoning>")
+                    {
                         in_think_block = true;
                     }
                     if in_think_block {
-                        if token.contains("</think>") {
+                        if token.contains("</think>")
+                            || token.contains("</thought>")
+                            || token.contains("</reasoning>")
+                        {
                             in_think_block = false;
                             on_event(AgentEvent::Thinking("Reasoning converged."));
                         }
@@ -344,11 +354,12 @@ impl DaedalusOrchestrator {
                 })
                 .await?;
 
-            let clean_content = if res.content.contains("<think>") {
-                if let Some(re) = &think_re {
-                    re.replace_all(&res.content, "").trim().to_string()
+            let clean_content = if let Some(re) = &think_re {
+                let stripped = re.replace_all(&res.content, "");
+                if let Some(ore) = &open_re {
+                    ore.replace_all(&stripped, "").trim().to_string()
                 } else {
-                    res.content.clone()
+                    stripped.trim().to_string()
                 }
             } else {
                 res.content.clone()

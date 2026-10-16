@@ -20,6 +20,18 @@ function resolveExistingBinary(base) {
 
   const candidates = [];
 
+  // 1. Check optionalDependencies packages (@atlasresearch/acode-<platform>-<arch>)
+  const platformPkgName = `@atlasresearch/acode-${platform === 'win32' ? 'win32' : platform}-${arch}`;
+  try {
+    const pkgBin = path.join(
+      path.dirname(require.resolve(`${platformPkgName}/package.json`)),
+      'bin',
+      isWin ? `${base}.exe` : base
+    );
+    candidates.push(pkgBin);
+  } catch (_) {}
+
+  // 2. Local packaged platform binaries in npm/bin/
   if (isAndroid) {
     // Android Bionic native targets (Termux)
     candidates.push(
@@ -30,6 +42,7 @@ function resolveExistingBinary(base) {
   } else {
     // Desktop POSIX, macOS, and Windows targets
     candidates.push(
+      path.join(__dirname, '..', 'bin', isWin ? `${base}.exe` : base),
       path.join(__dirname, '..', 'bin', `${base}-${platform === 'win32' ? 'win' : platform}-${arch}${isWin ? '.exe' : ''}`),
       path.join(__dirname, '..', 'bin', `${base}-${platform}-${arch}${isWin ? '.exe' : ''}`),
       path.join(__dirname, '..', 'bin', `${base}-${key}${isWin ? '.exe' : ''}`),
@@ -45,6 +58,8 @@ function resolveExistingBinary(base) {
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.cargo', 'bin', isWin ? `${base}.exe` : base),
     // Local workspace development target/release
     path.resolve(__dirname, '..', '..', 'target', 'release', isWin ? `${base}.exe` : base),
+    path.resolve(__dirname, '..', '..', 'target', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`, 'release', base),
+    path.resolve(__dirname, '..', '..', 'target', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-musl`, 'release', base),
     path.resolve(__dirname, '..', '..', 'target', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-linux-android`, 'release', base),
     path.resolve(__dirname, '..', '..', 'target', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-gnu`, 'release', base)
   );
@@ -62,7 +77,9 @@ function downloadBinary(base, targetPath) {
   return new Promise((resolve, reject) => {
     const { platform, arch, key } = getPlatformKey();
     const isWin = platform === 'win32';
-    const remoteFilename = isWin ? `${base}-windows-x64.exe` : `${base}-${key}`;
+    const remoteFilename = isWin
+      ? `${base}-windows-x64.exe`
+      : `${base}-${platform}-${arch}`;
     const pkg = require('../package.json');
     const url = `https://github.com/AtlasResearch-Labs/acode-cli/releases/download/v${pkg.version}/${remoteFilename}`;
 

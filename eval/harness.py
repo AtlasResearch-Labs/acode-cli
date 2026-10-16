@@ -62,9 +62,9 @@ def run_task(task, acode_bin, model=None, provider=None, timeout_secs=180):
                         k, v = line.split("=", 1)
                         child_env[k.strip()] = v.strip().strip("'").strip('"')
 
-        # Run acode non-interactively with optional model/provider specification
+        # Run acode non-interactively in SANDBOXED security mode (exercising permission gates)
         start_time = time.time()
-        cmd = [acode_bin, "--security", "full"]
+        cmd = [acode_bin, "--security", task.get("security_mode", "sandboxed")]
         if model:
             cmd.extend(["--model", model])
         if provider:
@@ -139,9 +139,10 @@ def run_task(task, acode_bin, model=None, provider=None, timeout_secs=180):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Atlas Daedalus Standardized Benchmark Evaluation Harness")
-    parser.add_argument("--model", type=str, default=None, help="Explicit foundation model (e.g. gemini-2.5-flash, deepseek-chat, gpt-4o)")
+    parser.add_argument("--model", type=str, default=None, help="Explicit foundation model (e.g. gemini-2.5-flash, gemini-2.5-pro, gpt-4o)")
     parser.add_argument("--provider", type=str, default=None, help="Provider backend (gemini, openai, anthropic, powerbox, ollama)")
-    parser.add_argument("--runs", type=int, default=1, help="Number of benchmark evaluation runs (default: 1)")
+    parser.add_argument("--runs", type=int, default=3, help="Number of benchmark evaluation runs (default: 3)")
+    parser.add_argument("--security", type=str, default="sandboxed", help="Security mode: sandboxed (default), strict, full")
     args = parser.parse_args()
 
     eval_dir = Path(__file__).resolve().parent
@@ -159,14 +160,34 @@ def main():
         print("Error: Could not locate 'acode' executable. Run 'cargo build --release' first.", file=sys.stderr)
         sys.exit(1)
 
-    named_model = args.model or "environment_configured"
-    named_provider = args.provider or "environment_configured"
+    detected_model = args.model
+    detected_provider = args.provider
+    workspace_env = Path(__file__).resolve().parent.parent / ".env"
+    if workspace_env.exists():
+        with open(workspace_env, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("GEMINI_MODEL=") and not detected_model:
+                    detected_model = line.split("=", 1)[1].strip().strip("'").strip('"')
+                elif line.startswith("OPENAI_MODEL=") and not detected_model:
+                    detected_model = line.split("=", 1)[1].strip().strip("'").strip('"')
+                elif "API_KEY=" in line:
+                    if line.startswith("GEMINI_") and not detected_provider:
+                        detected_provider = "gemini"
+                    elif line.startswith("OPENAI_") and not detected_provider:
+                        detected_provider = "openai"
+                    elif line.startswith("ANTHROPIC_") and not detected_provider:
+                        detected_provider = "anthropic"
+
+    named_model = detected_model or "gemini-2.5-flash"
+    named_provider = detected_provider or "gemini"
 
     print("=" * 65)
     print(" Atlas Daedalus Standardized Benchmark Evaluation Harness")
     print(f" Binary:   {acode_bin}")
     print(f" Provider: {named_provider}")
     print(f" Model:    {named_model}")
+    print(f" Mode:     {args.security}")
     print(f" Tasks:    {len(tasks)} benchmark problems")
     print(f" Runs:     {args.runs}")
     print("=" * 65)

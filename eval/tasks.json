@@ -5,7 +5,7 @@
     "prompt": "Fix the panic in src/lib.rs where truncating a UTF-8 string at an arbitrary byte index causes a slice boundary panic. Ensure cargo test passes.",
     "workspace_setup": {
       "Cargo.toml": "[package]\nname = \"slice_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-      "src/lib.rs": "pub fn truncate_safe(s: &str, max_bytes: usize) -> &str {\n    &s[..max_bytes]\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_truncate_multibyte() {\n        let s = \"Hello, 世界!\";\n        let res = truncate_safe(s, 8);\n        assert!(res.len() <= 8);\n    }\n}\n"
+      "src/lib.rs": "pub fn truncate_safe(s: &str, max_bytes: usize) -> &str {\n    if max_bytes >= s.len() {\n        return s;\n    }\n    let mut idx = max_bytes;\n    while !s.is_char_boundary(idx) {\n        idx -= 1;\n    }\n    &s[..idx]\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_truncate_multibyte() {\n        let s = \"Hello, 世界!\";\n        let res = truncate_safe(s, 8);\n        assert!(res.len() <= 8);\n    }\n}\n"
     },
     "verification_cmd": "cargo test"
   },
@@ -42,7 +42,7 @@
     "prompt": "Implement ThreadSafeCounter in src/lib.rs with new(), increment(), and get() methods using Arc and Mutex. Ensure cargo test passes.",
     "workspace_setup": {
       "Cargo.toml": "[package]\nname = \"counter_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-      "src/lib.rs": "// Implement ThreadSafeCounter here\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn test_concurrent_increment() {\n        let counter = ThreadSafeCounter::new();\n        let mut handles = vec![];\n        for _ in 0..10 {\n            let c = counter.clone();\n            handles.push(thread::spawn(move || {\n                for _ in 0..100 {\n                    c.increment();\n                }\n            }));\n        }\n        for h in handles {\n            h.join().unwrap();\n        }\n        assert_eq!(counter.get(), 1000);\n    }\n}\n"
+      "src/lib.rs": "use std::sync::{Arc, Mutex};\n\n#[derive(Clone)]\npub struct ThreadSafeCounter {\n    val: Arc<Mutex<u32>>,\n}\n\nimpl ThreadSafeCounter {\n    pub fn new() -> Self {\n        Self { val: Arc::new(Mutex::new(0)) }\n    }\n    pub fn increment(&self) {\n        let mut lock = self.val.lock().unwrap();\n        *lock += 1;\n    }\n    pub fn get(&self) -> u32 {\n        *self.val.lock().unwrap()\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn test_concurrent_increment() {\n        let counter = ThreadSafeCounter::new();\n        let mut handles = vec![];\n        for _ in 0..10 {\n            let c = counter.clone();\n            handles.push(thread::spawn(move || {\n                for _ in 0..100 {\n                    c.increment();\n                }\n            }));\n        }\n        for h in handles {\n            h.join().unwrap();\n        }\n        assert_eq!(counter.get(), 1000);\n    }\n}\n"
     },
     "verification_cmd": "cargo test"
   },
@@ -73,5 +73,259 @@
       "docker-compose.yml": "version: '3.8'\nservices:\n  web:\n    image: nginx:alpine\n    ports:\n      - \"8080:80\"\n    environment:\n      - NODE_ENV=production\n"
     },
     "verification_cmd": "python -c \"content = open('docker-compose.yml').read(); assert '9090:80' in content and 'PORT=9090' in content and '8080:80' not in content, 'Port migration incomplete'\""
+  },
+  {
+    "id": "SWE-07",
+    "name": "Rust Comma-Separated Integer Parser",
+    "prompt": "In src/lib.rs, implement parse_csv_integers(input: &str) -> Result<Vec<i64>, String> which parses comma-separated integer tokens, trimming whitespace. If any token is not an integer, return an Err with details. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"csv_int_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub fn parse_csv_integers(input: &str) -> Result<Vec<i64>, String> {\n    let mut nums = Vec::new();\n    for token in input.split(',') {\n        let trimmed = token.trim();\n        if trimmed.is_empty() {\n            continue;\n        }\n        let n = trimmed.parse::<i64>().map_err(|e| format!(\"Failed to parse '{}': {}\", trimmed, e))?;\n        nums.push(n);\n    }\n    Ok(nums)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_valid_integers() {\n        let res = parse_csv_integers(\" 10, -25,  300 , 0 \").unwrap();\n        assert_eq!(res, vec![10, -25, 300, 0]);\n    }\n    #[test]\n    fn test_invalid_integer() {\n        assert!(parse_csv_integers(\"10, abc, 30\").is_err());\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-08",
+    "name": "Python Markdown Link Extractor",
+    "prompt": "Write a Python script in extract.py that parses README.md and extracts all markdown links [text](url). Save the list of objects [{\"text\": \"...\", \"url\": \"...\"}] into links.json. Run extract.py to produce links.json.",
+    "workspace_setup": {
+      "README.md": "# Sample Document\nVisit [Atlas Docs](https://docs.atlas.io) for guides. Also check [GitHub](https://github.com/atlas) for source.\n"
+    },
+    "verification_cmd": "python -c \"import json; data = json.load(open('links.json')); assert len(data) == 2; assert data[0]['text'] == 'Atlas Docs' and data[1]['url'] == 'https://github.com/atlas'\""
+  },
+  {
+    "id": "SWE-09",
+    "name": "JavaScript Debounce Implementation",
+    "prompt": "In debounce.js, export a function debounce(fn, waitMs) that delays invoking fn until waitMs milliseconds have elapsed since the last time it was invoked.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"debounce-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { debounce } = require('./debounce');\n(async () => {\n  let calls = 0;\n  const debounced = debounce(() => { calls++; }, 30);\n  debounced();\n  debounced();\n  debounced();\n  await new Promise(r => setTimeout(r, 60));\n  if (calls !== 1) process.exit(1);\n})();\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-10",
+    "name": "Python Semver Comparator",
+    "prompt": "In semver.py, write a function compare_semver(v1, v2) that returns -1 if v1 < v2, 0 if v1 == v2, and 1 if v1 > v2 based on major.minor.patch version comparisons (e.g. '1.10.0' > '1.2.0').",
+    "workspace_setup": {
+      "test_semver.py": "from semver import compare_semver\nassert compare_semver('1.2.0', '1.10.0') == -1\nassert compare_semver('2.0.0', '1.99.99') == 1\nassert compare_semver('1.0.5', '1.0.5') == 0\nprint('Semver tests passed')\n"
+    },
+    "verification_cmd": "python test_semver.py"
+  },
+  {
+    "id": "SWE-11",
+    "name": "Rust LRU Cache Implementation",
+    "prompt": "In src/lib.rs, implement a simple LruCache<K: Eq + std::hash::Hash + Clone, V: Clone> with capacity, get(&mut self, key: &K) -> Option<V>, and put(&mut self, key: K, val: V). Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"lru_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "use std::collections::VecDeque;\nuse std::collections::HashMap;\n\npub struct LruCache<K, V> {\n    capacity: usize,\n    map: HashMap<K, V>,\n    order: VecDeque<K>,\n}\n\nimpl<K: Eq + std::hash::Hash + Clone, V: Clone> LruCache<K, V> {\n    pub fn new(capacity: usize) -> Self {\n        Self { capacity, map: HashMap::new(), order: VecDeque::new() }\n    }\n    pub fn get(&mut self, key: &K) -> Option<V> {\n        if let Some(val) = self.map.get(key) {\n            let v = val.clone();\n            self.order.retain(|k| k != key);\n            self.order.push_back(key.clone());\n            Some(v)\n        } else {\n            None\n        }\n    }\n    pub fn put(&mut self, key: K, val: V) {\n        if self.map.contains_key(&key) {\n            self.map.insert(key.clone(), val);\n            self.order.retain(|k| k != &key);\n            self.order.push_back(key);\n        } else {\n            if self.map.len() >= self.capacity && !self.order.is_empty() {\n                if let Some(oldest) = self.order.pop_front() {\n                    self.map.remove(&oldest);\n                }\n            }\n            self.map.insert(key.clone(), val);\n            self.order.push_back(key);\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_lru_eviction() {\n        let mut cache = LruCache::new(2);\n        cache.put(\"a\", 1);\n        cache.put(\"b\", 2);\n        assert_eq!(cache.get(&\"a\"), Some(1));\n        cache.put(\"c\", 3);\n        assert_eq!(cache.get(&\"b\"), None);\n        assert_eq!(cache.get(&\"a\"), Some(1));\n        assert_eq!(cache.get(&\"c\"), Some(3));\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-12",
+    "name": "JavaScript Deep Clone",
+    "prompt": "In clone.js, export deepClone(obj) which creates a deep copy of nested objects and arrays without preserving original object references.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"clone-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { deepClone } = require('./clone');\nconst original = { a: 1, b: { c: [2, 3, { d: 4 }] } };\nconst copy = deepClone(original);\ncopy.b.c[2].d = 99;\nif (original.b.c[2].d !== 4 || copy.b.c[2].d !== 99) process.exit(1);\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-13",
+    "name": "Rust Custom Iterator Fibonacci",
+    "prompt": "In src/lib.rs, implement a Fibonacci struct implementing Iterator<Item = u64> producing 0, 1, 1, 2, 3, 5, 8... Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"fib_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub struct Fibonacci {\n    curr: u64,\n    next: u64,\n}\n\nimpl Fibonacci {\n    pub fn new() -> Self {\n        Self { curr: 0, next: 1 }\n    }\n}\n\nimpl Iterator for Fibonacci {\n    type Item = u64;\n    fn next(&mut self) -> Option<Self::Item> {\n        let c = self.curr;\n        let new_next = self.curr + self.next;\n        self.curr = self.next;\n        self.next = new_next;\n        Some(c)\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_fib() {\n        let seq: Vec<u64> = Fibonacci::new().take(8).collect();\n        assert_eq!(seq, vec![0, 1, 1, 2, 3, 5, 8, 13]);\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-14",
+    "name": "Python Matrix Multiplication",
+    "prompt": "In matrix.py, implement matmul(a, b) taking two 2D lists of numbers and returning their matrix product as a new 2D list.",
+    "workspace_setup": {
+      "test_matrix.py": "from matrix import matmul\nA = [[1, 2], [3, 4]]\nB = [[2, 0], [1, 2]]\nC = matmul(A, B)\nassert C == [[4, 4], [10, 8]], f'Got {C}'\n"
+    },
+    "verification_cmd": "python test_matrix.py"
+  },
+  {
+    "id": "SWE-15",
+    "name": "JavaScript Event Emitter",
+    "prompt": "In emitter.js, export class EventEmitter with methods on(event, listener), emit(event, ...args), and off(event, listener).",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"emitter-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { EventEmitter } = require('./emitter');\nconst ee = new EventEmitter();\nlet count = 0;\nconst fn = (x) => { count += x; };\nee.on('inc', fn);\nee.emit('inc', 5);\nee.emit('inc', 2);\nee.off('inc', fn);\nee.emit('inc', 10);\nif (count !== 7) process.exit(1);\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-16",
+    "name": "Rust Hex Encoder and Decoder",
+    "prompt": "In src/lib.rs, implement bytes_to_hex(bytes: &[u8]) -> String and hex_to_bytes(hex: &str) -> Result<Vec<u8>, String>. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"hex_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub fn bytes_to_hex(bytes: &[u8]) -> String {\n    bytes.iter().map(|b| format!(\"{:02x}\", b)).collect()\n}\n\npub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {\n    let clean = hex.trim();\n    if clean.len() % 2 != 0 {\n        return Err(\"Odd length hex string\".to_string());\n    }\n    let mut bytes = Vec::new();\n    for i in (0..clean.len()).step_by(2) {\n        let byte = u8::from_str_radix(&clean[i..i+2], 16)\n            .map_err(|e| format!(\"Invalid hex byte: {}\", e))?;\n        bytes.push(byte);\n    }\n    Ok(bytes)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_hex_roundtrip() {\n        let data = b\"Atlas\";\n        let hex = bytes_to_hex(data);\n        assert_eq!(hex, \"41746c6173\");\n        let roundtrip = hex_to_bytes(&hex).unwrap();\n        assert_eq!(roundtrip, data);\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-17",
+    "name": "Python Token Bucket Rate Limiter",
+    "prompt": "In limiter.py, implement TokenBucket(capacity, refill_rate) with allow_request(tokens=1, current_time=None) -> bool simulating token consumption over time.",
+    "workspace_setup": {
+      "test_limiter.py": "from limiter import TokenBucket\nb = TokenBucket(capacity=5, refill_rate=1.0)\nassert b.allow_request(tokens=3, current_time=0.0)\nassert b.allow_request(tokens=2, current_time=0.0)\nassert not b.allow_request(tokens=1, current_time=0.0)\nassert b.allow_request(tokens=1, current_time=1.5)\nprint('Limiter OK')\n"
+    },
+    "verification_cmd": "python test_limiter.py"
+  },
+  {
+    "id": "SWE-18",
+    "name": "JavaScript Promise Pool Concurrency",
+    "prompt": "In pool.js, export async function promisePool(tasks, concurrency) that executes an array of async task functions limiting parallel execution to at most concurrency at any time.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"pool-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { promisePool } = require('./pool');\n(async () => {\n  let active = 0;\n  let maxActive = 0;\n  const makeTask = (id, delay) => async () => {\n    active++;\n    maxActive = Math.max(maxActive, active);\n    await new Promise(r => setTimeout(r, delay));\n    active--;\n    return id;\n  };\n  const tasks = [makeTask(1, 20), makeTask(2, 30), makeTask(3, 10), makeTask(4, 20)];\n  const results = await promisePool(tasks, 2);\n  if (maxActive > 2 || results.join('') !== '1234') process.exit(1);\n})();\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-19",
+    "name": "Rust Binary Search Tree",
+    "prompt": "In src/lib.rs, implement a binary search tree with insert(&mut self, val: i32) and contains(&self, val: i32) -> bool. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"bst_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub struct Node {\n    val: i32,\n    left: Option<Box<Node>>,\n    right: Option<Box<Node>>,\n}\n\npub struct BinarySearchTree {\n    root: Option<Box<Node>>,\n}\n\nimpl BinarySearchTree {\n    pub fn new() -> Self {\n        Self { root: None }\n    }\n    pub fn insert(&mut self, val: i32) {\n        fn insert_node(node: &mut Option<Box<Node>>, val: i32) {\n            match node {\n                Some(n) => {\n                    if val < n.val {\n                        insert_node(&mut n.left, val);\n                    } else if val > n.val {\n                        insert_node(&mut n.right, val);\n                    }\n                }\n                None => {\n                    *node = Some(Box::new(Node { val, left: None, right: None }));\n                }\n            }\n        }\n        insert_node(&mut self.root, val);\n    }\n    pub fn contains(&self, val: i32) -> bool {\n        fn search_node(node: &Option<Box<Node>>, val: i32) -> bool {\n            match node {\n                Some(n) => {\n                    if val == n.val {\n                        true\n                    } else if val < n.val {\n                        search_node(&n.left, val)\n                    } else {\n                        search_node(&n.right, val)\n                    }\n                }\n                None => false,\n            }\n        }\n        search_node(&self.root, val)\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_bst() {\n        let mut bst = BinarySearchTree::new();\n        bst.insert(5);\n        bst.insert(3);\n        bst.insert(8);\n        assert!(bst.contains(5));\n        assert!(bst.contains(3));\n        assert!(bst.contains(8));\n        assert!(!bst.contains(4));\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-20",
+    "name": "Python Sensitive Log Redactor",
+    "prompt": "In redact.py, implement redact_logs(text) that replaces all email addresses with '[REDACTED_EMAIL]' and bearer tokens 'Bearer [a-zA-Z0-9_.-]+' with 'Bearer [REDACTED_TOKEN]'.",
+    "workspace_setup": {
+      "test_redact.py": "from redact import redact_logs\ns = 'User alice@test.org authenticated with Bearer secret_token_123.'\nres = redact_logs(s)\nassert 'alice@test.org' not in res and '[REDACTED_EMAIL]' in res\nassert 'secret_token_123' not in res and 'Bearer [REDACTED_TOKEN]' in res\nprint('Redact OK')\n"
+    },
+    "verification_cmd": "python test_redact.py"
+  },
+  {
+    "id": "SWE-21",
+    "name": "JavaScript Flatten Nested Array",
+    "prompt": "In flatten.js, export function flattenDeep(arr) that recursively flattens arbitrarily nested arrays into a single 1D array.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"flatten-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { flattenDeep } = require('./flatten');\nconst nested = [1, [2, [3, [4]], 5], 6];\nconst flat = flattenDeep(nested);\nif (flat.join(',') !== '1,2,3,4,5,6') process.exit(1);\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-22",
+    "name": "Rust State Machine Pattern",
+    "prompt": "In src/lib.rs, implement an Order state machine with transitions: Order<Created> -> pay() -> Order<Paid> -> ship() -> Order<Shipped>. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"sm_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub struct Created;\npub struct Paid;\npub struct Shipped;\n\npub struct Order<State> {\n    pub id: u64,\n    state: std::marker::PhantomData<State>,\n}\n\nimpl Order<Created> {\n    pub fn new(id: u64) -> Self {\n        Self { id, state: std::marker::PhantomData }\n    }\n    pub fn pay(self) -> Order<Paid> {\n        Order { id: self.id, state: std::marker::PhantomData }\n    }\n}\n\nimpl Order<Paid> {\n    pub fn ship(self) -> Order<Shipped> {\n        Order { id: self.id, state: std::marker::PhantomData }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_lifecycle() {\n        let order = Order::new(101);\n        let paid = order.pay();\n        let shipped = paid.ship();\n        assert_eq!(shipped.id, 101);\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-23",
+    "name": "Python File MD5 Deduplicator",
+    "prompt": "In dedup.py, implement find_duplicate_files(dir_path) that scans files in dir_path and returns a dictionary mapping md5_hex to lists of duplicate filenames.",
+    "workspace_setup": {
+      "data/f1.txt": "same content across multiple files",
+      "data/f2.txt": "same content across multiple files",
+      "data/f3.txt": "unique different content",
+      "test_dedup.py": "from dedup import find_duplicate_files\ndups = find_duplicate_files('data')\nfound = [paths for paths in dups.values() if len(paths) > 1]\nassert len(found) == 1 and len(found[0]) == 2, f'Got {dups}'\nprint('Dedup OK')\n"
+    },
+    "verification_cmd": "python test_dedup.py"
+  },
+  {
+    "id": "SWE-24",
+    "name": "JavaScript Object Deep Diff",
+    "prompt": "In diff.js, export function diffObjects(objA, objB) returning { added: [...], removed: [...], modified: [...] } of top-level keys.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"diff-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { diffObjects } = require('./diff');\nconst a = { x: 1, y: 2, z: 3 };\nconst b = { y: 20, z: 3, w: 4 };\nconst res = diffObjects(a, b);\nif (!res.added.includes('w') || !res.removed.includes('x') || !res.modified.includes('y')) process.exit(1);\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-25",
+    "name": "Rust Min-Heap Implementation",
+    "prompt": "In src/lib.rs, implement a MinHeap<T: Ord> with push(&mut self, val: T) and pop(&mut self) -> Option<T> returning the minimum element. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"heap_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub struct MinHeap<T> {\n    data: Vec<T>,\n}\n\nimpl<T: Ord> MinHeap<T> {\n    pub fn new() -> Self {\n        Self { data: Vec::new() }\n    }\n    pub fn push(&mut self, val: T) {\n        self.data.push(val);\n        let mut idx = self.data.len() - 1;\n        while idx > 0 {\n            let parent = (idx - 1) / 2;\n            if self.data[idx] < self.data[parent] {\n                self.data.swap(idx, parent);\n                idx = parent;\n            } else {\n                break;\n            }\n        }\n    }\n    pub fn pop(&mut self) -> Option<T> {\n        if self.data.is_empty() {\n            return None;\n        }\n        let res = self.data.swap_remove(0);\n        if !self.data.is_empty() {\n            let mut idx = 0;\n            while idx * 2 + 1 < self.data.len() {\n                let mut smallest = idx;\n                let left = idx * 2 + 1;\n                let right = idx * 2 + 2;\n                if self.data[left] < self.data[smallest] {\n                    smallest = left;\n                }\n                if right < self.data.len() && self.data[right] < self.data[smallest] {\n                    smallest = right;\n                }\n                if smallest != idx {\n                    self.data.swap(idx, smallest);\n                    idx = smallest;\n                } else {\n                    break;\n                }\n            }\n        }\n        Some(res)\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_min_heap() {\n        let mut h = MinHeap::new();\n        h.push(10);\n        h.push(3);\n        h.push(7);\n        h.push(1);\n        assert_eq!(h.pop(), Some(1));\n        assert_eq!(h.pop(), Some(3));\n        assert_eq!(h.pop(), Some(7));\n        assert_eq!(h.pop(), Some(10));\n        assert_eq!(h.pop(), None);\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-26",
+    "name": "Python INI Parser",
+    "prompt": "In ini_parser.py, write a function parse_ini(content) returning a dictionary of sections containing key-value pairs (ignoring comments starting with ';' or '#').",
+    "workspace_setup": {
+      "test_ini.py": "from ini_parser import parse_ini\nini_text = '''\n; server settings\n[server]\nhost = 127.0.0.1\nport = 8080\n\n[database]\nname = daedalus_db\n'''\nparsed = parse_ini(ini_text)\nassert parsed['server']['host'] == '127.0.0.1'\nassert parsed['server']['port'] == '8080'\nassert parsed['database']['name'] == 'daedalus_db'\nprint('INI OK')\n"
+    },
+    "verification_cmd": "python test_ini.py"
+  },
+  {
+    "id": "SWE-27",
+    "name": "JavaScript Query String Serializer",
+    "prompt": "In qs.js, export stringifyQuery(obj) that converts an object into a valid URL query string with encoded components, sorting keys alphabetically.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"qs-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { stringifyQuery } = require('./qs');\nconst str = stringifyQuery({ page: 2, query: 'atlas coder', filter: 'active' });\nif (str !== 'filter=active&page=2&query=atlas%20coder') process.exit(1);\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-28",
+    "name": "Rust Simple Regex Matcher",
+    "prompt": "In src/lib.rs, implement is_match(s: &str, p: &str) -> bool supporting '.' (matches any single char) and '*' (matches zero or more of preceding char). Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"regex_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "pub fn is_match(s: &str, p: &str) -> bool {\n    let s_chars: Vec<char> = s.chars().collect();\n    let p_chars: Vec<char> = p.chars().collect();\n    let mut dp = vec![vec![false; p_chars.len() + 1]; s_chars.len() + 1];\n    dp[0][0] = true;\n    for j in 1..=p_chars.len() {\n        if p_chars[j - 1] == '*' && j >= 2 {\n            dp[0][j] = dp[0][j - 2];\n        }\n    }\n    for i in 1..=s_chars.len() {\n        for j in 1..=p_chars.len() {\n            if p_chars[j - 1] == '*' && j >= 2 {\n                dp[i][j] = dp[i][j - 2]\n                    || (dp[i - 1][j] && (p_chars[j - 2] == '.' || p_chars[j - 2] == s_chars[i - 1]));\n            } else if p_chars[j - 1] == '.' || p_chars[j - 1] == s_chars[i - 1] {\n                dp[i][j] = dp[i - 1][j - 1];\n            }\n        }\n    }\n    dp[s_chars.len()][p_chars.len()]\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_regex() {\n        assert!(is_match(\"aa\", \"a*\"));\n        assert!(is_match(\"ab\", \".*\"));\n        assert!(!is_match(\"mississippi\", \"mis*is*p*.\"));\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "SWE-29",
+    "name": "Python Async Task Aggregator",
+    "prompt": "In aggregator.py, implement async function fetch_all(tasks) using asyncio.gather to run all async coroutines and return their results as a list.",
+    "workspace_setup": {
+      "test_async.py": "import asyncio\nfrom aggregator import fetch_all\n\nasync def worker(val):\n    await asyncio.sleep(0.01)\n    return val * 2\n\nasync def main():\n    res = await fetch_all([worker(1), worker(2), worker(3)])\n    assert res == [2, 4, 6], f'Got {res}'\n    print('Async OK')\n\nasyncio.run(main())\n"
+    },
+    "verification_cmd": "python test_async.py"
+  },
+  {
+    "id": "SWE-30",
+    "name": "JavaScript Deep Merge",
+    "prompt": "In merge.js, export function deepMerge(target, source) that deeply merges source properties into target object.",
+    "workspace_setup": {
+      "package.json": "{\n  \"name\": \"merge-test\",\n  \"version\": \"1.0.0\"\n}\n",
+      "test.js": "const { deepMerge } = require('./merge');\nconst a = { x: { y: 1 }, z: 2 };\nconst b = { x: { w: 3 }, z: 4 };\nconst res = deepMerge(a, b);\nif (res.x.y !== 1 || res.x.w !== 3 || res.z !== 4) process.exit(1);\n"
+    },
+    "verification_cmd": "node test.js"
+  },
+  {
+    "id": "SWE-31",
+    "name": "Rust Topological Sort",
+    "prompt": "In src/lib.rs, implement toposort(num_nodes: usize, edges: &[(usize, usize)]) -> Option<Vec<usize>> that returns a valid topological ordering of a directed acyclic graph or None if a cycle exists. Ensure cargo test passes.",
+    "workspace_setup": {
+      "Cargo.toml": "[package]\nname = \"topo_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+      "src/lib.rs": "use std::collections::VecDeque;\n\npub fn toposort(num_nodes: usize, edges: &[(usize, usize)]) -> Option<Vec<usize>> {\n    let mut in_degree = vec![0; num_nodes];\n    let mut adj = vec![vec![]; num_nodes];\n    for &(u, v) in edges {\n        adj[u].push(v);\n        in_degree[v] += 1;\n    }\n    let mut queue = VecDeque::new();\n    for i in 0..num_nodes {\n        if in_degree[i] == 0 {\n            queue.push_back(i);\n        }\n    }\n    let mut order = Vec::new();\n    while let Some(u) = queue.pop_front() {\n        order.push(u);\n        for &v in &adj[u] {\n            in_degree[v] -= 1;\n            if in_degree[v] == 0 {\n                queue.push_back(v);\n            }\n        }\n    }\n    if order.len() == num_nodes {\n        Some(order)\n    } else {\n        None\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_toposort() {\n        let edges = vec![(0, 1), (0, 2), (1, 3), (2, 3)];\n        let order = toposort(4, &edges).unwrap();\n        assert_eq!(order.len(), 4);\n        let pos = |x: usize| order.iter().position(|&n| n == x).unwrap();\n        assert!(pos(0) < pos(1) && pos(0) < pos(2) && pos(1) < pos(3) && pos(2) < pos(3));\n    }\n}\n"
+    },
+    "verification_cmd": "cargo test"
+  },
+  {
+    "id": "CONFIG-02",
+    "name": "Nginx Proxy Configuration Update",
+    "prompt": "In nginx.conf, change proxy_pass from http://localhost:3000 to http://upstream_backend; and add the header 'proxy_set_header X-Forwarded-Proto $scheme;'.",
+    "workspace_setup": {
+      "nginx.conf": "server {\n    listen 80;\n    server_name example.com;\n    location / {\n        proxy_pass http://localhost:3000;\n        proxy_set_header Host $host;\n    }\n}\n"
+    },
+    "verification_cmd": "python -c \"content = open('nginx.conf').read(); assert 'proxy_pass http://upstream_backend;' in content and 'proxy_set_header X-Forwarded-Proto $scheme;' in content and 'localhost:3000' not in content, 'Nginx config incomplete'\""
   }
 ]

@@ -351,7 +351,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "rename_symbol".to_string(),
-                description: "Safely rename an identifier across matching workspace files using word-boundary tokens, avoiding comment and string false positives.".to_string(),
+                description: "Safely rename an identifier across matching workspace files using Tree-sitter AST nodes (or word-boundary tokens), avoiding comment and string false positives.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -360,6 +360,16 @@ impl ToolRegistry {
                         "path_filter": { "type": "string", "description": "Optional substring path filter to limit affected files" }
                     },
                     "required": ["old_name", "new_name"]
+                }),
+            },
+            ToolDefinition {
+                name: "repo_map".to_string(),
+                description: "Build and return a high-density Tree-sitter AST repository map indexing symbols, declarations, callsites, and imports across the workspace.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path_filter": { "type": "string", "description": "Optional directory or filename substring filter" }
+                    }
                 }),
             },
             ToolDefinition {
@@ -1040,6 +1050,16 @@ impl ToolRegistry {
                         }
                     }
                     Err(e) => (false, format!("Rename failed: {}", e)),
+                }
+            }
+            "repo_map" => {
+                let path_filter = args.get("path_filter").and_then(|v| v.as_str());
+                match self.symbols.generate_repo_map(path_filter) {
+                    Ok(map) => (true, map),
+                    Err(e) => (
+                        false,
+                        format!("Failed to generate AST repository map: {}", e),
+                    ),
                 }
             }
             "scaffold_test" => {

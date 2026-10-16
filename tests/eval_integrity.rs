@@ -18,8 +18,9 @@ fn test_eval_benchmark_suite_integrity() {
         .as_array()
         .expect("tasks.json must be a JSON array of tasks");
     assert!(
-        !arr.is_empty(),
-        "Benchmark suite must contain at least one task"
+        arr.len() >= 30,
+        "Benchmark suite must contain at least 30 standardized tasks, found {}",
+        arr.len()
     );
 
     for task in arr {

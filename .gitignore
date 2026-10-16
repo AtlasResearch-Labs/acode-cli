@@ -4,6 +4,7 @@ dist/
 node_modules/
 npm/bin/native/
 npm/bin/acode-*
+npm/bin/acode.exe
 *.tgz
 *.zip
 **/*.rs.bk

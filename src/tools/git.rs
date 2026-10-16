@@ -89,15 +89,13 @@ impl GitTools {
     }
 
     pub async fn commit(&self, message: &str, author: &str) -> Result<String, String> {
-        // Stage tracked changes if nothing is staged yet (avoids blind git add -A)
+        // Verify there are staged changes before committing (never run blind git add behind user's back)
         let staged_diff = self.get_diff(true).await;
         if staged_diff.trim().is_empty() {
-            let mut add_cmd = Command::new("git");
-            add_cmd
-                .arg("add")
-                .arg("-u")
-                .current_dir(&self.workspace_root);
-            let _ = add_cmd.output().await;
+            return Err(
+                "No staged changes to commit. Stage your changes with 'git add <path>' first."
+                    .to_string(),
+            );
         }
 
         let mut cmd = Command::new("git");
@@ -132,5 +130,61 @@ impl GitTools {
             }
             Err(e) => Err(format!("Failed to execute git commit: {}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_git_tools_isolated_repo() {
+        let temp = tempfile::tempdir().expect("Failed to create tempdir");
+        let root = temp.path();
+
+        let git_tools = GitTools::new(root);
+        let status_pre = git_tools.get_status().await;
+        assert!(!status_pre.is_repo);
+
+        let _ = tokio::process::Command::new("git")
+            .arg("init")
+            .current_dir(root)
+            .output()
+            .await;
+        let _ = tokio::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(root)
+            .output()
+            .await;
+        let _ = tokio::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(root)
+            .output()
+            .await;
+
+        let status_init = git_tools.get_status().await;
+        assert!(status_init.is_repo);
+        assert!(status_init.clean);
+
+        let file_path = root.join("test.txt");
+        let _ = std::fs::write(&file_path, b"hello");
+
+        let status_untracked = git_tools.get_status().await;
+        assert!(status_untracked.is_repo);
+        assert!(!status_untracked.clean);
+        assert!(status_untracked.untracked.contains(&"test.txt".to_string()));
+
+        let _ = tokio::process::Command::new("git")
+            .args(["add", "test.txt"])
+            .current_dir(root)
+            .output()
+            .await;
+        let commit_res = git_tools
+            .commit("Initial commit", "Test <test@example.com>")
+            .await;
+        assert!(commit_res.is_ok());
+
+        let status_clean = git_tools.get_status().await;
+        assert!(status_clean.clean);
     }
 }

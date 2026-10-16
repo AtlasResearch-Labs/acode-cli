@@ -119,12 +119,25 @@ impl ShadowSandbox {
         }
 
         // 1. Stage all untracked and modified files inside the shadow worktree
-        let _ = Self::run_git(&session.worktree_path, &["add", "-A"]);
+        Self::run_git(&session.worktree_path, &["add", "-A"]).map_err(|e| {
+            format!(
+                "Failed to stage changes in shadow worktree (git add -A failed: {}). Merge aborted. Shadow worktree preserved at {}",
+                e,
+                session.worktree_path.display()
+            )
+        })?;
 
         // 2. Commit any staged changes in the shadow worktree so all work is preserved on session.branch_name
-        let status = Self::run_git(&session.worktree_path, &["status", "--porcelain"])?;
+        let status = Self::run_git(&session.worktree_path, &["status", "--porcelain"]).map_err(|e| {
+            format!(
+                "Failed to check git status in shadow worktree (git status failed: {}). Merge aborted. Shadow worktree preserved at {}",
+                e,
+                session.worktree_path.display()
+            )
+        })?;
+
         if !status.trim().is_empty() {
-            let _ = Self::run_git(
+            Self::run_git(
                 &session.worktree_path,
                 &[
                     "-c",
@@ -136,7 +149,13 @@ impl ShadowSandbox {
                     "daedalus shadow worktree auto-commit",
                     "--no-verify",
                 ],
-            );
+            ).map_err(|e| {
+                format!(
+                    "Failed to auto-commit staged changes in shadow worktree (git commit failed: {}). Merge aborted. Shadow worktree preserved at {}",
+                    e,
+                    session.worktree_path.display()
+                )
+            })?;
         }
 
         // 3. Generate full binary diff between workspace HEAD and the shadow branch
@@ -150,7 +169,14 @@ impl ShadowSandbox {
                 "HEAD",
                 &session.branch_name,
             ],
-        )?;
+        ).map_err(|e| {
+            format!(
+                "Failed to generate diff between HEAD and shadow branch '{}': {}. Merge aborted. Shadow worktree preserved at {}",
+                session.branch_name,
+                e,
+                session.worktree_path.display()
+            )
+        })?;
 
         if diff.trim().is_empty() {
             self.discard_sandbox(session)?;
@@ -328,6 +354,8 @@ impl ShadowSandbox {
 mod tests {
     use super::*;
 
+    static TEST_SANDBOX_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_sandbox_instantiation() {
         let sandbox = ShadowSandbox::new(".");
@@ -338,6 +366,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_lifecycle() {
+        let _guard = TEST_SANDBOX_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let sandbox = ShadowSandbox::new(".");
         if !sandbox.is_git_repo() {
             return;
@@ -368,6 +397,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_merge_with_untracked_files() {
+        let _guard = TEST_SANDBOX_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let sandbox = ShadowSandbox::new(".");
         if !sandbox.is_git_repo() {
             return;
@@ -399,6 +429,67 @@ mod tests {
 
         // Clean up probe file
         let _ = fs::remove_file(main_applied);
+        assert!(!session.worktree_path.exists());
+    }
+
+    #[test]
+    fn test_sandbox_merge_aborts_on_staging_failure_and_preserves_worktree() {
+        let _guard = TEST_SANDBOX_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let sandbox = ShadowSandbox::new(".");
+        if !sandbox.is_git_repo() {
+            return;
+        }
+
+        let session = sandbox
+            .create_sandbox(Some("merge_fail_unit"))
+            .expect("Failed to create test sandbox");
+        assert!(session.worktree_path.exists());
+
+        // Create an untracked file
+        let probe = session.worktree_path.join("fail_probe.tmp");
+        fs::write(&probe, b"should not be lost").expect("Failed to write probe");
+
+        // Find worktree gitdir to simulate a git staging failure
+        let git_file = session.worktree_path.join(".git");
+        if git_file.exists() {
+            if let Ok(content) = fs::read_to_string(&git_file) {
+                if let Some(gitdir_str) = content.strip_prefix("gitdir:") {
+                    let gitdir = PathBuf::from(gitdir_str.trim());
+                    let lock_file = gitdir.join("index.lock");
+                    // Create index.lock so git add -A fails
+                    if fs::write(&lock_file, b"simulated lock").is_ok() {
+                        let merge_res = sandbox.merge_sandbox(&session);
+                        assert!(
+                            merge_res.is_err(),
+                            "Merge must abort when git staging fails"
+                        );
+                        let err_msg = merge_res.unwrap_err();
+                        assert!(
+                            err_msg.contains("Merge aborted")
+                                && err_msg.contains("Shadow worktree preserved"),
+                            "Error message should state merge aborted and worktree preserved: {}",
+                            err_msg
+                        );
+
+                        // Worktree MUST still exist and contain the unmerged file
+                        assert!(
+                            session.worktree_path.exists(),
+                            "Shadow worktree must be preserved on merge failure"
+                        );
+                        assert!(
+                            probe.exists(),
+                            "User's uncommitted files must be preserved on merge failure"
+                        );
+
+                        // Remove lock file so cleanup can proceed
+                        let _ = fs::remove_file(lock_file);
+                    }
+                }
+            }
+        }
+
+        // Clean up sandbox
+        let _ = sandbox.discard_sandbox(&session);
         assert!(!session.worktree_path.exists());
     }
 }

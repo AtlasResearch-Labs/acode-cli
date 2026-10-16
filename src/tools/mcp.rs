@@ -19,6 +19,8 @@ use std::io::{IsTerminal, Write};
 
 use crate::tools::registry::ToolDefinition;
 
+static MCP_STORE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpTrustStore {
     #[serde(default)]
@@ -60,6 +62,7 @@ impl McpTrustStore {
     }
 
     pub fn is_trusted(path: &Path, content_bytes: &[u8]) -> bool {
+        let _guard = MCP_STORE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let store = Self::load();
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let key = canon.to_string_lossy().to_string();
@@ -75,6 +78,7 @@ impl McpTrustStore {
     }
 
     pub fn trust_file(path: &Path, content_bytes: &[u8]) {
+        let _guard = MCP_STORE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut store = Self::load();
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let key = canon.to_string_lossy().to_string();
@@ -87,6 +91,7 @@ impl McpTrustStore {
     }
 
     pub fn revoke_file(path: &Path) -> bool {
+        let _guard = MCP_STORE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut store = Self::load();
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let key = canon.to_string_lossy().to_string();

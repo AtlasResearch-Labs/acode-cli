@@ -465,9 +465,75 @@ impl SecurityPolicy {
         None
     }
 
+    /// Strips Windows verbatim prefix (`\\?\` or `\\?\UNC\`) and normalizes drive letter
+    /// to ensure standard path prefix comparisons and cross-platform consistency.
+    pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+        #[cfg(target_os = "windows")]
+        {
+            let s = path.to_string_lossy();
+            let raw = if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+                format!(r"\\{}", stripped)
+            } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                stripped.to_string()
+            } else {
+                s.to_string()
+            };
+
+            let bytes = raw.as_bytes();
+            if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+                let upper = (bytes[0] as char).to_ascii_uppercase();
+                PathBuf::from(format!("{}{}", upper, &raw[1..]))
+            } else {
+                PathBuf::from(raw)
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        path.to_path_buf()
+    }
+
+    /// Resolves the canonical path of the nearest existing ancestor directory on disk,
+    /// and appends the non-existent leaf components.
+    /// This prevents symlink traversal escape when target destination files do not yet exist.
+    pub fn resolve_ancestor_canonical(path: &Path) -> PathBuf {
+        let normalized = Self::normalize_lexically(path);
+        if let Ok(canon) = normalized.canonicalize() {
+            return Self::strip_verbatim_prefix(&canon);
+        }
+
+        let mut trailing = Vec::new();
+        let mut curr: &Path = &normalized;
+
+        while !curr.exists() {
+            if let Some(filename) = curr.file_name() {
+                trailing.push(filename.to_os_string());
+                if let Some(parent) = curr.parent() {
+                    curr = parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let mut base = if curr.exists() {
+            curr.canonicalize()
+                .map(|p| Self::strip_verbatim_prefix(&p))
+                .unwrap_or_else(|_| Self::strip_verbatim_prefix(&Self::normalize_lexically(curr)))
+        } else {
+            Self::strip_verbatim_prefix(&Self::normalize_lexically(curr))
+        };
+
+        for comp in trailing.into_iter().rev() {
+            base.push(comp);
+        }
+
+        Self::normalize_lexically(&base)
+    }
+
     /// Checks if a path targets sensitive credentials, ssh keys, or configuration
     pub fn is_sensitive_path(path: &Path) -> bool {
-        let norm = Self::normalize_lexically(path);
+        let norm = Self::resolve_ancestor_canonical(path);
         let path_str = norm.to_string_lossy().to_lowercase().replace('\\', "/");
 
         let sensitive_fragments = [
@@ -506,20 +572,15 @@ impl SecurityPolicy {
             workspace_root.join(target)
         };
 
-        // Lexically normalize to eliminate .. path traversal on both existing and non-existing files
-        let norm_target = Self::normalize_lexically(&abs_target);
-        let canon_target = norm_target.canonicalize().unwrap_or(norm_target);
-
-        let norm_root = Self::normalize_lexically(workspace_root);
-        let canon_root = norm_root.canonicalize().unwrap_or(norm_root);
+        let canon_target = Self::resolve_ancestor_canonical(&abs_target);
+        let canon_root = Self::resolve_ancestor_canonical(workspace_root);
 
         if canon_target.starts_with(&canon_root) {
             return true;
         }
 
         for trusted in trusted_paths {
-            let norm_trusted = Self::normalize_lexically(trusted);
-            let canon_trusted = norm_trusted.canonicalize().unwrap_or(norm_trusted);
+            let canon_trusted = Self::resolve_ancestor_canonical(trusted);
             if canon_target.starts_with(&canon_trusted) {
                 return true;
             }
@@ -610,5 +671,64 @@ mod tests {
         let risk2 = SecurityPolicy::scan_command_risk(cmd2);
         assert!(risk2.is_some());
         assert_eq!(risk2.unwrap().0, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn test_symlink_ancestor_resolution_and_confinement() {
+        use std::process::Command;
+
+        let temp = std::env::temp_dir().join(format!(
+            "daedalus_symlink_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let workspace = temp.join("workspace");
+        let outside = temp.join("outside");
+        let _ = std::fs::create_dir_all(&workspace);
+        let _ = std::fs::create_dir_all(&outside);
+
+        let symlink = workspace.join("symlink_to_outside");
+
+        #[cfg(target_os = "windows")]
+        {
+            if std::os::windows::fs::symlink_dir(&outside, &symlink).is_err() {
+                let _ = Command::new("cmd")
+                    .args([
+                        "/C",
+                        "mklink",
+                        "/J",
+                        symlink.to_str().unwrap(),
+                        outside.to_str().unwrap(),
+                    ])
+                    .output();
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::os::unix::fs::symlink(&outside, &symlink);
+        }
+
+        if symlink.exists() {
+            let non_existent = symlink.join("non_existent_file.txt");
+            assert!(!non_existent.exists());
+
+            let canon_resolved = SecurityPolicy::resolve_ancestor_canonical(&non_existent);
+            let canon_outside = SecurityPolicy::resolve_ancestor_canonical(&outside);
+            assert!(
+                canon_resolved.starts_with(&canon_outside),
+                "Ancestor resolution must resolve through symlink to the outside directory"
+            );
+
+            let within =
+                SecurityPolicy::is_within_trusted_boundaries(&non_existent, &workspace, &[]);
+            assert!(
+                !within,
+                "Non-existent file through symlink pointing outside must be rejected from workspace boundaries"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

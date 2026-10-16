@@ -246,8 +246,8 @@ impl PermissionGate {
                 workspace_root.join(target)
             };
 
-            // Lexical normalization resolves '..' and '.' in memory even if the file does not yet exist on disk
-            let normalized = SecurityPolicy::normalize_lexically(&abs_path);
+            // Resolve nearest existing ancestor canonical path to prevent symlink escapes on non-existent files
+            let normalized = SecurityPolicy::resolve_ancestor_canonical(&abs_path);
 
             // Check sensitive file credentials
             if SecurityPolicy::is_sensitive_path(&normalized) {
@@ -887,5 +887,66 @@ mod tests {
                 other
             ),
         }
+    }
+
+    #[test]
+    fn test_gate_symlink_escape_non_existent_destination() {
+        use std::process::Command;
+
+        let temp = std::env::temp_dir().join(format!(
+            "daedalus_gate_symlink_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let workspace = temp.join("workspace");
+        let outside = temp.join("outside");
+        let _ = std::fs::create_dir_all(&workspace);
+        let _ = std::fs::create_dir_all(&outside);
+
+        let symlink = workspace.join("symlink_to_outside");
+
+        #[cfg(target_os = "windows")]
+        {
+            if std::os::windows::fs::symlink_dir(&outside, &symlink).is_err() {
+                let _ = Command::new("cmd")
+                    .args([
+                        "/C",
+                        "mklink",
+                        "/J",
+                        symlink.to_str().unwrap(),
+                        outside.to_str().unwrap(),
+                    ])
+                    .output();
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::os::unix::fs::symlink(&outside, &symlink);
+        }
+
+        if symlink.exists() {
+            let gate = PermissionGate::new(Some(SecurityMode::Sandboxed));
+            let args = json!({ "path": "symlink_to_outside/non_existent.txt" });
+
+            let decision = gate.evaluate("write_file", &args, &workspace);
+            match decision {
+                PermissionDecision::Prompt {
+                    risk_level, reason, ..
+                } => {
+                    assert_eq!(risk_level, RiskLevel::Medium);
+                    assert!(reason.contains(
+                        "Operation targets directory or drive outside designated workspace"
+                    ));
+                }
+                other => panic!(
+                    "Expected Prompt for symlink workspace escape, got {:?}",
+                    other
+                ),
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

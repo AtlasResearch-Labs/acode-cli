@@ -1,5 +1,6 @@
 //! Atlas Daedalus — Filesystem Tools (Ripgrep-grade traversal)
 
+use crate::security::policy::SecurityPolicy;
 use ignore::WalkBuilder;
 use regex::Regex;
 use similar::TextDiff;
@@ -26,13 +27,32 @@ impl FsTools {
         }
     }
 
+    /// Enforces that the target path stays strictly confined inside the canonical workspace boundaries.
+    /// Resolves nearest existing ancestor to prevent symlink traversal escapes on non-existent destinations.
+    pub fn enforce_confinement(&self, target_path: &str) -> Result<PathBuf, String> {
+        let full_path = self.resolve_path(target_path);
+        let canon_target = SecurityPolicy::resolve_ancestor_canonical(&full_path);
+        let canon_root = SecurityPolicy::resolve_ancestor_canonical(&self.workspace_root);
+
+        if !canon_target.starts_with(&canon_root) {
+            return Err(format!(
+                "Workspace confinement violation: '{}' resolves to '{}' which escapes workspace root '{}'",
+                target_path,
+                canon_target.display(),
+                self.workspace_root.display()
+            ));
+        }
+
+        Ok(canon_target)
+    }
+
     pub fn view_file(
         &self,
         target_path: &str,
         start_line: Option<usize>,
         end_line: Option<usize>,
     ) -> Result<String, String> {
-        let full_path = self.resolve_path(target_path);
+        let full_path = self.enforce_confinement(target_path)?;
         if !full_path.exists() {
             return Err(format!("File not found: {}", target_path));
         }
@@ -61,7 +81,7 @@ impl FsTools {
         target_content: &str,
         replacement_content: &str,
     ) -> Result<String, String> {
-        let full_path = self.resolve_path(target_path);
+        let full_path = self.enforce_confinement(target_path)?;
         if !full_path.exists() {
             return Err(format!("File not found: {}", target_path));
         }
@@ -99,7 +119,7 @@ impl FsTools {
     }
 
     pub fn write_file(&self, target_path: &str, content: &str) -> Result<String, String> {
-        let full_path = self.resolve_path(target_path);
+        let full_path = self.enforce_confinement(target_path)?;
         if let Some(parent) = full_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -109,7 +129,7 @@ impl FsTools {
     }
 
     pub fn list_dir(&self, target_path: &str, recursive: bool) -> Result<Vec<String>, String> {
-        let full_path = self.resolve_path(target_path);
+        let full_path = self.enforce_confinement(target_path)?;
         if !full_path.exists() {
             return Err(format!("Directory not found: {}", target_path));
         }
@@ -152,7 +172,7 @@ impl FsTools {
     }
 
     pub fn search_code(&self, query: &str, target_dir: &str) -> Result<Vec<String>, String> {
-        let full_path = self.resolve_path(target_dir);
+        let full_path = self.enforce_confinement(target_dir)?;
         let regex = Regex::new(query).map_err(|e| format!("Invalid regex: {}", e))?;
 
         let walker = WalkBuilder::new(&full_path)
@@ -193,5 +213,85 @@ impl FsTools {
         }
 
         Ok(matches)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn test_fs_tools_confinement_blocks_symlink_escape() {
+        let temp = std::env::temp_dir().join(format!(
+            "daedalus_fs_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let workspace = temp.join("workspace");
+        let outside = temp.join("outside");
+        let _ = fs::create_dir_all(&workspace);
+        let _ = fs::create_dir_all(&outside);
+
+        let symlink = workspace.join("symlink_to_outside");
+
+        #[cfg(target_os = "windows")]
+        {
+            if std::os::windows::fs::symlink_dir(&outside, &symlink).is_err() {
+                let _ = Command::new("cmd")
+                    .args([
+                        "/C",
+                        "mklink",
+                        "/J",
+                        symlink.to_str().unwrap(),
+                        outside.to_str().unwrap(),
+                    ])
+                    .output();
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::os::unix::fs::symlink(&outside, &symlink);
+        }
+
+        if symlink.exists() {
+            let fs_tools = FsTools::new(&workspace);
+
+            // Attempting write through symlink to outside non-existent file
+            let write_res =
+                fs_tools.write_file("symlink_to_outside/escaped.txt", "malicious write");
+            assert!(
+                write_res.is_err(),
+                "FsTools::write_file must reject writing through symlink that escapes workspace"
+            );
+            assert!(
+                !outside.join("escaped.txt").exists(),
+                "Escaped file must not have been created on disk"
+            );
+
+            // Attempting view through symlink
+            let view_res = fs_tools.view_file("symlink_to_outside/non_existent.txt", None, None);
+            assert!(
+                view_res.is_err(),
+                "FsTools::view_file must reject viewing through symlink that escapes workspace"
+            );
+
+            // Attempting patch through symlink
+            let patch_res = fs_tools.patch_file("symlink_to_outside/escaped.txt", "old", "new");
+            assert!(
+                patch_res.is_err(),
+                "FsTools::patch_file must reject patching through symlink that escapes workspace"
+            );
+        }
+
+        // Test normal write inside workspace works cleanly
+        let fs_tools = FsTools::new(&workspace);
+        let write_ok = fs_tools.write_file("sub/valid.txt", "safe content");
+        assert!(write_ok.is_ok(), "Legitimate workspace write must succeed");
+        assert!(workspace.join("sub").join("valid.txt").exists());
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

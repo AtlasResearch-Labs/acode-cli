@@ -676,4 +676,42 @@ mod tests {
             other => panic!("Expected Prompt for unknown tool in Sandboxed mode, got {:?}", other),
         }
     }
+
+    #[test]
+    fn test_gate_repl_shortcuts_and_slash_commands_intercepted_in_strict() {
+        let gate = PermissionGate::new(Some(SecurityMode::Strict));
+        let workspace = PathBuf::from("/workspace");
+
+        // Direct REPL shell shortcut: !command
+        let cmd_args = json!({ "command": "echo hello" });
+        let cmd_res = gate.evaluate("run_command", &cmd_args, &workspace);
+        match cmd_res {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected prompt for REPL direct shell in Strict mode, got {:?}", other),
+        }
+
+        // Direct REPL background daemon: !&command
+        let daemon_args = json!({ "command": "python server.py" });
+        let daemon_res = gate.evaluate("start_daemon", &daemon_args, &workspace);
+        match daemon_res {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected prompt for REPL background daemon in Strict mode, got {:?}", other),
+        }
+
+        // Slash command /undo: git checkout -- .
+        let undo_args = json!({ "command": "git checkout -- ." });
+        let undo_res = gate.evaluate("run_command", &undo_args, &workspace);
+        match undo_res {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Medium),
+            other => panic!("Expected prompt for /undo command in Strict mode, got {:?}", other),
+        }
+
+        // Destructive / high-risk direct shortcut: !rm -rf /
+        let danger_args = json!({ "command": "rm -rf /" });
+        let danger_res = gate.evaluate("run_command", &danger_args, &workspace);
+        match danger_res {
+            PermissionDecision::Prompt { risk_level, .. } => assert_eq!(risk_level, RiskLevel::Critical),
+            other => panic!("Expected Critical prompt for destructive shell shortcut, got {:?}", other),
+        }
+    }
 }

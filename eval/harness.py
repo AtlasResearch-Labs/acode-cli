@@ -51,10 +51,16 @@ def run_task(task, acode_bin, model=None, provider=None, timeout_secs=180):
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
-        # Copy workspace .env if present
+        # Isolate credentials: pass environment variables through child_env instead of copying .env file to disk
+        child_env = os.environ.copy()
         workspace_env = Path(__file__).resolve().parent.parent / ".env"
         if workspace_env.exists():
-            shutil.copy(workspace_env, Path(temp_dir) / ".env")
+            with open(workspace_env, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        child_env[k.strip()] = v.strip().strip("'").strip('"')
 
         # Run acode non-interactively with optional model/provider specification
         start_time = time.time()
@@ -68,6 +74,7 @@ def run_task(task, acode_bin, model=None, provider=None, timeout_secs=180):
         proc = subprocess.run(
             cmd,
             cwd=temp_dir,
+            env=child_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -85,6 +92,7 @@ def run_task(task, acode_bin, model=None, provider=None, timeout_secs=180):
                 verify_cmd,
                 shell=True,
                 cwd=temp_dir,
+                env=child_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

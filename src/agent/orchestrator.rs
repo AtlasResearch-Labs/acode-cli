@@ -110,7 +110,7 @@ impl DaedalusOrchestrator {
                Security mode is: {}.\n\
                If the user asks to inspect, read, search, list, or modify files across other drives, execute using your tools. The security gate will prompt the user if confirmation is required.\n\
                If the user asks to switch, cd into, or get into another directory, call the 'change_workspace' tool immediately.\n\
-            4. AUTONOMOUS VERIFICATION & REPAIR: When you modify code, always verify it with the project's tests or builds. If errors occur, inspect compiler/test output and self-heal.\n\
+            4. AUTONOMOUS VERIFICATION & REPAIR: When you modify or create code, always verify it! If the workspace contains test files or scripts (e.g. test.js, tests/, Cargo.toml, pytest), run them (using run_command e.g. 'node test.js' or 'cargo test') to verify that your implementation satisfies all test assertions. If errors occur, inspect compiler/test output and self-heal before concluding.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
             7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, scaffold_test, manage_sandbox.\n\
@@ -126,6 +126,7 @@ impl DaedalusOrchestrator {
             9. MANDATORY INSPECTION & OUTPUT VERIFICATION:\n\
                - Before filtering, transforming, or processing any existing file (e.g. logs, data files, configs), you MUST invoke view_file on the file first to inspect its actual column layout, line endings, and syntax. Never guess or assume log formats.\n\
                - IMMUTABLE INPUT DATA: NEVER overwrite, replace, or re-create input data files (e.g. data.json, access.log) that are already present in EXISTING WORKSPACE ROOT ENTRIES with mock/sample data. Treat them as real input data and read from them.\n\
+               - In JavaScript/Node.js CommonJS modules, when asked to export a function or object, export it to support both named destructuring and default imports: e.g. 'module.exports = fn; module.exports.fn = fn;' or 'module.exports = {{ fn }};'.\n\
                - When asked to generate or save an output file (e.g. 404_summary.txt, output.json), you MUST run the command/script AND verify the generated output file with view_file to ensure it actually contains the expected data.\n\
                - On Windows, prefer cross-platform Python one-liners or scripts over complex PowerShell regexes.\n\n\
             WORKSPACE ROOT: {}\n{}{}",
@@ -140,6 +141,34 @@ impl DaedalusOrchestrator {
             if mem.is_empty() { String::new() } else { format!("\nPROJECT MEMORY:\n{}", mem) },
             if let Some(graph) = &self.task_graph { format!("\n\n[ACTIVE GOAL DECOMPOSITION GRAPH]\n{}", graph.render_progress()) } else { String::new() }
         )
+    }
+
+    /// Centralized security gate evaluation for REPL shortcuts, slash commands, and autonomous tools.
+    /// Intercepts operations that violate security policy or require human approval.
+    pub fn check_gate(&mut self, tool_name: &str, args: &serde_json::Value) -> bool {
+        let decision = self.security.evaluate(tool_name, args, &self.workspace_root);
+        match decision {
+            PermissionDecision::Allow => true,
+            PermissionDecision::Deny(reason) => {
+                crate::TuiRenderer::print_error(&format!("[SECURITY POLICY DENIED] {}", reason));
+                false
+            }
+            PermissionDecision::Prompt { reason, details, risk_level, suggest_trust_path } => {
+                let allowed = self.security.prompt_user_interactive(
+                    tool_name,
+                    &reason,
+                    &details,
+                    risk_level,
+                    suggest_trust_path.as_deref(),
+                );
+                if !allowed {
+                    crate::TuiRenderer::print_error(&format!("[SECURITY CHALLENGE DENIED] Execution rejected: {}", details));
+                    false
+                } else {
+                    true
+                }
+            }
+        }
     }
 
     pub fn set_workspace(&mut self, new_root: PathBuf) {

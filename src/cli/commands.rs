@@ -94,6 +94,10 @@ impl SlashCommandHandler {
                     println!("{}Usage: /fetch <url>{}\n  Example: /fetch https://arxiv.org/abs/2312.11805\n", TuiRenderer::RED, TuiRenderer::RESET);
                     return true;
                 }
+                let gate_args = serde_json::json!({ "url": arg });
+                if !orchestrator.check_gate("web_fetch", &gate_args) {
+                    return true;
+                }
                 println!("{}[ACODE] Fetching and parsing web content...{}\n", TuiRenderer::DIM, TuiRenderer::RESET);
                 match orchestrator.tools.web.web_fetch(arg, 8000).await {
                     Ok(content) => println!("{}\n", content),
@@ -102,6 +106,11 @@ impl SlashCommandHandler {
                 true
             }
             "/test" => {
+                let test_cmd = if arg.is_empty() { "cargo test" } else { arg };
+                let gate_args = serde_json::json!({ "command": test_cmd });
+                if !orchestrator.check_gate("run_tests", &gate_args) {
+                    return true;
+                }
                 println!("{}[ACODE] Running test suite...{}", TuiRenderer::DIM, TuiRenderer::RESET);
                 let res = if arg.is_empty() {
                     orchestrator.verifier.run_verification().await
@@ -478,6 +487,10 @@ impl SlashCommandHandler {
                 true
             }
             "/undo" => {
+                let gate_args = serde_json::json!({ "command": "git checkout -- ." });
+                if !orchestrator.check_gate("run_command", &gate_args) {
+                    return true;
+                }
                 println!("{}[ACODE] Reverting uncommitted working tree changes...{}", TuiRenderer::YELLOW, TuiRenderer::RESET);
                 let res = orchestrator.tools.shell.run_command("git checkout -- .", None).await;
                 if res.success {

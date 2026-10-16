@@ -92,40 +92,51 @@ impl ShadowSandbox {
         Ok(session)
     }
 
-    /// Merges changes from shadow worktree back into primary workspace
+    /// Merges changes from shadow worktree back into primary workspace,
+    /// preserving all untracked files, multiple commits, modifications, and renames.
     pub fn merge_sandbox(&self, session: &ShadowSession) -> Result<String, String> {
         if !session.worktree_path.exists() {
             return Err(format!("Shadow worktree path '{}' does not exist.", session.worktree_path.display()));
         }
 
-        // Generate patch diff between the shadow worktree and original HEAD
-        let diff = Self::run_git(&session.worktree_path, &["--no-pager", "diff", "HEAD"])?;
+        // 1. Stage all untracked and modified files inside the shadow worktree
+        let _ = Self::run_git(&session.worktree_path, &["add", "-A"]);
+
+        // 2. Commit any staged changes in the shadow worktree so all work is preserved on session.branch_name
+        let status = Self::run_git(&session.worktree_path, &["status", "--porcelain"])?;
+        if !status.trim().is_empty() {
+            let _ = Self::run_git(
+                &session.worktree_path,
+                &[
+                    "-c", "user.name=Atlas Daedalus",
+                    "-c", "user.email=daedalus@atlasresearchlabs.online",
+                    "commit", "-m", "daedalus shadow worktree auto-commit",
+                    "--no-verify",
+                ],
+            );
+        }
+
+        // 3. Generate full binary diff between workspace HEAD and the shadow branch
+        // This diff captures all changes across all commits and untracked files added in the shadow worktree
+        let diff = Self::run_git(
+            &self.workspace_root,
+            &["--no-pager", "diff", "--binary", "HEAD", &session.branch_name],
+        )?;
 
         if diff.trim().is_empty() {
-            // Check if there are committed changes in the branch
-            let log_diff = Self::run_git(&session.worktree_path, &["--no-pager", "diff", "HEAD~1..HEAD"]);
-            if let Ok(ld) = log_diff {
-                if !ld.trim().is_empty() {
-                    // Cherry-pick or apply commit
-                    let patch_file = self.workspace_root.join(".daedalus").join("shadow.patch");
-                    let _ = fs::write(&patch_file, &ld);
-                    let apply_res = Self::run_git(&self.workspace_root, &["apply", "--whitespace=nowarn", &patch_file.to_string_lossy()]);
-                    let _ = fs::remove_file(&patch_file);
-                    self.discard_sandbox(session)?;
-                    return apply_res.map(|_| "Applied committed shadow changes to working tree.".to_string());
-                }
-            }
             self.discard_sandbox(session)?;
             return Ok("No modifications detected in shadow sandbox. Teardown complete.".to_string());
         }
 
-        // Apply diff to primary workspace root
-        let patch_file = self.workspace_root.join(".daedalus").join("shadow.patch");
-        fs::write(&patch_file, &diff).map_err(|e| format!("Failed to write patch: {}", e))?;
+        // 4. Apply the comprehensive diff to primary workspace root
+        let daedalus_dir = self.workspace_root.join(".daedalus");
+        let _ = fs::create_dir_all(&daedalus_dir);
+        let patch_file = daedalus_dir.join("shadow.patch");
+        fs::write(&patch_file, diff.as_bytes()).map_err(|e| format!("Failed to write patch: {}", e))?;
 
         let apply_res = Self::run_git(
             &self.workspace_root,
-            &["apply", "--whitespace=nowarn", &patch_file.to_string_lossy()],
+            &["apply", "--whitespace=nowarn", "--binary", &patch_file.to_string_lossy()],
         );
 
         let _ = fs::remove_file(&patch_file);
@@ -135,7 +146,11 @@ impl ShadowSandbox {
                 let _ = self.discard_sandbox(session);
                 Ok("Successfully merged and applied all shadow changes to active working tree.".to_string())
             }
-            Err(e) => Err(format!("Git apply failed: {}. Shadow worktree preserved at {}", e, session.worktree_path.display())),
+            Err(e) => Err(format!(
+                "Git apply failed: {}. Shadow worktree preserved at {}",
+                e,
+                session.worktree_path.display()
+            )),
         }
     }
 
@@ -288,5 +303,35 @@ mod tests {
         // Test list after discard
         let list_after = sandbox.list_sandboxes().expect("Failed to list sandboxes after discard");
         assert!(!list_after.iter().any(|s| s.session_id == "ci_test_unit"));
+    }
+
+    #[test]
+    fn test_sandbox_merge_with_untracked_files() {
+        let sandbox = ShadowSandbox::new(".");
+        if !sandbox.is_git_repo() {
+            return;
+        }
+
+        let session = sandbox.create_sandbox(Some("merge_test_unit")).expect("Failed to create test sandbox");
+        assert!(session.worktree_path.exists());
+
+        // Create a new untracked file in the shadow worktree
+        let test_file = session.worktree_path.join("shadow_untracked_probe.tmp");
+        fs::write(&test_file, b"daedalus shadow worktree test content").expect("Failed to write probe file");
+        assert!(test_file.exists());
+
+        // Merge sandbox - must stage untracked files, auto-commit, diff, and apply to main workspace
+        let merge_res = sandbox.merge_sandbox(&session);
+        assert!(merge_res.is_ok(), "Merge failed: {:?}", merge_res);
+
+        // Verify the untracked file was applied to main workspace
+        let main_applied = Path::new(".").join("shadow_untracked_probe.tmp");
+        assert!(main_applied.exists(), "Merged untracked file was not applied to main workspace");
+        let content = fs::read_to_string(&main_applied).unwrap_or_default();
+        assert_eq!(content, "daedalus shadow worktree test content");
+
+        // Clean up probe file
+        let _ = fs::remove_file(main_applied);
+        assert!(!session.worktree_path.exists());
     }
 }

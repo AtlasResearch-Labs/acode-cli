@@ -104,6 +104,10 @@ impl DaedalusREPL {
                     if trimmed.starts_with("!&") {
                         let shell_cmd = trimmed[2..].trim();
                         if !shell_cmd.is_empty() {
+                            let gate_args = serde_json::json!({ "command": shell_cmd, "cmd": shell_cmd });
+                            if !self.orchestrator.check_gate("start_daemon", &gate_args) {
+                                continue;
+                            }
                             println!();
                             match self.orchestrator.tools.daemons.start_daemon(shell_cmd, &self.orchestrator.workspace_root) {
                                 Ok(job) => {
@@ -117,10 +121,14 @@ impl DaedalusREPL {
                         }
                     }
 
-                    // Direct shell command bypass with '!' prefix
+                    // Direct shell command with '!' prefix
                     if trimmed.starts_with('!') {
                         let shell_cmd = trimmed[1..].trim();
                         if !shell_cmd.is_empty() {
+                            let gate_args = serde_json::json!({ "command": shell_cmd, "cmd": shell_cmd });
+                            if !self.orchestrator.check_gate("run_command", &gate_args) {
+                                continue;
+                            }
                             println!();
                             let res = self.orchestrator.tools.shell.run_command(shell_cmd, None).await;
                             if !res.stdout.is_empty() {

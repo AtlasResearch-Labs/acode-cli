@@ -50,20 +50,36 @@ impl TerminalInputEngine {
         }
     }
 
-    /// Enter raw mode and request Kitty Keyboard Protocol (CSI u) for Shift+Enter disambiguation
+    /// Check if terminal emulator safely supports Kitty progressive keyboard protocol
+    pub fn is_kitty_protocol_supported() -> bool {
+        if std::env::var("WT_SESSION").is_ok()
+            || std::env::var("KITTY_WINDOW_ID").is_ok()
+            || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+            || std::env::var("WEZTERM_EXECUTABLE").is_ok()
+        {
+            matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true))
+        } else {
+            false
+        }
+    }
+
+    /// Enter raw mode and request Kitty Keyboard Protocol (CSI u) for Shift+Enter disambiguation if supported
     pub fn enter_raw_mode() -> io::Result<()> {
         enable_raw_mode()?;
-        // Request Kitty enhanced keyboard flags (safely ignored by terminals that do not support it)
-        let _ = crossterm::execute!(
-            stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
+        if Self::is_kitty_protocol_supported() {
+            let _ = crossterm::execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
         Ok(())
     }
 
-    /// Restore standard terminal mode and pop Kitty protocol flags
+    /// Restore standard terminal mode and pop Kitty protocol flags if pushed
     pub fn exit_raw_mode() -> io::Result<()> {
-        let _ = crossterm::execute!(stdout(), PopKeyboardEnhancementFlags);
+        if Self::is_kitty_protocol_supported() {
+            let _ = crossterm::execute!(stdout(), PopKeyboardEnhancementFlags);
+        }
         disable_raw_mode()?;
         Ok(())
     }
@@ -223,7 +239,7 @@ impl TerminalInputEngine {
         loop {
             let event = match crossterm::event::read() {
                 Ok(ev) => ev,
-                Err(_) => break,
+                Err(e) => return Err(e),
             };
 
             match event {
@@ -321,7 +337,8 @@ impl TerminalInputEngine {
                                         }
                                         let submitted = std::mem::take(&mut self.buffer);
                                         self.cursor_pos = 0;
-                                        println!();
+                                        print!("\r\n");
+                                        let _ = stdout().flush();
                                         return Ok(Some(submitted));
                                     }
 
@@ -354,15 +371,18 @@ impl TerminalInputEngine {
                                     }
                                     print!("\r\x1b[{}A", total);
                                 }
-                                println!();
+                                print!("\r\n");
+                                let _ = stdout().flush();
                                 return Ok(Some(line));
                             }
                             InputAction::Exit => {
-                                println!();
+                                print!("\r\n");
+                                let _ = stdout().flush();
                                 return Ok(None);
                             }
                             InputAction::Cancel => {
-                                println!();
+                                print!("\r\n");
+                                let _ = stdout().flush();
                                 return Ok(Some(String::new()));
                             }
                             InputAction::OpenMenu => {
@@ -393,8 +413,6 @@ impl TerminalInputEngine {
                 _ => {}
             }
         }
-
-        Ok(None)
     }
 
     /// Insert a character at the current cursor position

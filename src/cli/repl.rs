@@ -1,7 +1,6 @@
 //! Atlas Daedalus — Terminal Interactive REPL
 
 use std::io::{self, IsTerminal, Write};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::orchestrator::{AgentEvent, DaedalusOrchestrator};
 use crate::cli::commands::SlashCommandHandler;
@@ -19,7 +18,7 @@ impl DaedalusREPL {
         Self { orchestrator }
     }
 
-    async fn render_prompt(&self) -> String {
+    async fn render_prompt_card(&self) -> String {
         let metrics = crate::telemetry::host::HostInspector::collect();
         let folder_name = self
             .orchestrator
@@ -54,7 +53,6 @@ impl DaedalusREPL {
         if vp.is_compact() {
             let indigo = TuiRenderer::INDIGO;
             let box_tl = TuiRenderer::BOX_TL;
-            let box_bl = TuiRenderer::BOX_BL;
             let bold = TuiRenderer::BOLD;
             let white = TuiRenderer::WHITE;
             let slate = TuiRenderer::SLATE;
@@ -62,12 +60,11 @@ impl DaedalusREPL {
             let reset = TuiRenderer::RESET;
 
             format!(
-                "\n{indigo}{box_tl}─ {bold}{white}[acode]{reset} {slate}{folder_name}{reset}{emerald}{git_info}{reset}\n{indigo}{box_bl}❯{reset} "
+                "{indigo}{box_tl}─ {bold}{white}[acode]{reset} {slate}{folder_name}{reset}{emerald}{git_info}{reset}"
             )
         } else {
             let indigo = TuiRenderer::INDIGO;
             let box_tl = TuiRenderer::BOX_TL;
-            let box_bl = TuiRenderer::BOX_BL;
             let bold = TuiRenderer::BOLD;
             let white = TuiRenderer::WHITE;
             let slate = TuiRenderer::SLATE;
@@ -78,9 +75,16 @@ impl DaedalusREPL {
             let rss = metrics.process_rss_mb;
 
             format!(
-                "\n{indigo}{box_tl}─ {bold}{white}[acode]{reset} {slate}{folder_name}{reset}{emerald}{git_info}{reset} {cyan}{model}{reset} {sec_color}{sec_mode}{reset} {charcoal}{rss}MB{reset}\n{indigo}{box_bl}❯{reset} "
+                "{indigo}{box_tl}─ {bold}{white}[acode]{reset} {slate}{folder_name}{reset}{emerald}{git_info}{reset} {cyan}{model}{reset} {sec_color}{sec_mode}{reset} {charcoal}{rss}MB{reset}"
             )
         }
+    }
+
+    fn active_prompt_prefix() -> String {
+        let indigo = TuiRenderer::INDIGO;
+        let box_bl = TuiRenderer::BOX_BL;
+        let reset = TuiRenderer::RESET;
+        format!("{indigo}{box_bl}❯{reset} ")
     }
 
     fn load_history() -> Vec<String> {
@@ -127,38 +131,44 @@ impl DaedalusREPL {
         completion_engine.refresh_workspace_files(&self.orchestrator.workspace_root);
         let mut floating_menu = FloatingMenu::new();
 
-        let stdin = tokio::io::stdin();
-        let mut fallback_reader = BufReader::new(stdin).lines();
-
         loop {
             TuiRenderer::osc_prompt_start();
-            let prompt_str = self.render_prompt().await;
+            let card_str = self.render_prompt_card().await;
+            println!("\n{}", card_str);
+            let _ = io::stdout().flush();
+
+            let prompt_prefix = Self::active_prompt_prefix();
 
             let submitted_opt = if io::stdin().is_terminal() {
                 TuiRenderer::osc_input_start();
                 let ast_symbols = self.orchestrator.tools.symbols.get_all_symbol_names();
                 match input_engine.read_line_interactive(
-                    &prompt_str,
+                    &prompt_prefix,
                     &completion_engine,
                     &mut floating_menu,
                     &ast_symbols,
                 ) {
                     Ok(res) => res,
-                    Err(e) => {
-                        TuiRenderer::print_error(&format!("Terminal input error: {}", e));
-                        break;
+                    Err(_) => {
+                        // Resilient fallback to standard line input if raw mode reading encounters an issue
+                        print!("{}", prompt_prefix);
+                        let _ = io::stdout().flush();
+                        let mut line = String::new();
+                        match io::stdin().read_line(&mut line) {
+                            Ok(0) => None,
+                            Ok(_) => Some(line.trim_end_matches(&['\r', '\n'][..]).to_string()),
+                            Err(_) => None,
+                        }
                     }
                 }
             } else {
-                print!("{}", prompt_str);
+                print!("{}", prompt_prefix);
                 let _ = io::stdout().flush();
-                match fallback_reader.next_line().await {
-                    Ok(Some(l)) => Some(l),
-                    Ok(None) => None,
-                    Err(e) => {
-                        TuiRenderer::print_error(&format!("IO error: {}", e));
-                        break;
-                    }
+                let mut line = String::new();
+                match io::stdin().read_line(&mut line) {
+                    Ok(0) => None,
+                    Ok(_) => Some(line.trim_end_matches(&['\r', '\n'][..]).to_string()),
+                    Err(_) => None,
                 }
             };
 

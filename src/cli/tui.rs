@@ -28,28 +28,45 @@ impl TuiRenderer {
     pub const OSC_OUTPUT_START: &'static str = "\x1b]133;C\x07";
     pub const OSC_COMMAND_FINISHED: &'static str = "\x1b]133;D;0\x07";
 
+    /// Check if host terminal environment supports semantic OSC 133 integration
+    pub fn supports_osc133() -> bool {
+        std::env::var("WT_SESSION").is_ok()
+            || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+            || std::env::var("TERM_PROGRAM").is_ok()
+            || std::env::var("KITTY_WINDOW_ID").is_ok()
+            || std::env::var("WEZTERM_EXECUTABLE").is_ok()
+    }
+
     /// Emit OSC 133 prompt start marker
     pub fn osc_prompt_start() {
-        print!("{}", Self::OSC_PROMPT_START);
-        let _ = std::io::stdout().flush();
+        if Self::supports_osc133() {
+            print!("{}", Self::OSC_PROMPT_START);
+            let _ = std::io::stdout().flush();
+        }
     }
 
     /// Emit OSC 133 input start marker
     pub fn osc_input_start() {
-        print!("{}", Self::OSC_INPUT_START);
-        let _ = std::io::stdout().flush();
+        if Self::supports_osc133() {
+            print!("{}", Self::OSC_INPUT_START);
+            let _ = std::io::stdout().flush();
+        }
     }
 
     /// Emit OSC 133 output start marker
     pub fn osc_output_start() {
-        print!("{}", Self::OSC_OUTPUT_START);
-        let _ = std::io::stdout().flush();
+        if Self::supports_osc133() {
+            print!("{}", Self::OSC_OUTPUT_START);
+            let _ = std::io::stdout().flush();
+        }
     }
 
     /// Emit OSC 133 command finished marker with exit status
     pub fn osc_command_finished(exit_code: i32) {
-        print!("\x1b]133;D;{}\x07", exit_code);
-        let _ = std::io::stdout().flush();
+        if Self::supports_osc133() {
+            print!("\x1b]133;D;{}\x07", exit_code);
+            let _ = std::io::stdout().flush();
+        }
     }
 
     // Standard 16-color ANSI
@@ -484,7 +501,7 @@ impl TuiRenderer {
                 Self::RESET
             );
         }
-        println!("{}{}{}\n", Self::CHARCOAL, border, Self::RESET);
+        println!("{}{}{}", Self::CHARCOAL, border, Self::RESET);
     }
 
     /// Print unified diff with line numbers and addition/deletion visual bar

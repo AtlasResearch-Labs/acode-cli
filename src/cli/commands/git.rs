@@ -81,7 +81,7 @@ pub async fn handle(cmd: &str, arg: &str, orchestrator: &mut DaedalusOrchestrato
             }
             println!(
                 "{}[ACODE] Reverting uncommitted working tree changes...{}",
-                TuiRenderer::YELLOW,
+                TuiRenderer::AMBER,
                 TuiRenderer::RESET
             );
             let res = orchestrator
@@ -89,16 +89,21 @@ pub async fn handle(cmd: &str, arg: &str, orchestrator: &mut DaedalusOrchestrato
                 .shell
                 .run_command("git checkout -- .", None)
                 .await;
+            let _ = orchestrator
+                .tools
+                .shell
+                .run_command("git clean -fd", None)
+                .await;
             if res.success {
                 println!(
                     "{}[OK] Working tree restored to previous clean git commit.{}\n",
-                    TuiRenderer::GREEN,
+                    TuiRenderer::EMERALD,
                     TuiRenderer::RESET
                 );
             } else {
                 println!(
                     "{}[FAIL] Revert failed: {}{}\n",
-                    TuiRenderer::RED,
+                    TuiRenderer::ROSE,
                     res.stderr,
                     TuiRenderer::RESET
                 );

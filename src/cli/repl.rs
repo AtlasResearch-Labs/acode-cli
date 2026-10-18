@@ -39,25 +39,45 @@ impl DaedalusREPL {
         let model = &self.orchestrator.provider.config.model;
         let sec_mode = self.orchestrator.security.config.mode.to_string();
 
-        format!(
-            "{}{}daedalus {}{}[{}{}{}]{} ({}{}{} | {}MB | {}{}{})>{} ",
-            TuiRenderer::BOLD,
-            TuiRenderer::CYAN,
-            TuiRenderer::RESET,
-            TuiRenderer::DIM,
-            folder_name,
-            TuiRenderer::GREEN,
-            git_info,
-            TuiRenderer::RESET,
-            TuiRenderer::CYAN,
-            model,
-            TuiRenderer::RESET,
-            metrics.process_rss_mb,
-            TuiRenderer::YELLOW,
-            sec_mode,
-            TuiRenderer::RESET,
-            TuiRenderer::RESET
-        )
+        let sec_color = match sec_mode.as_str() {
+            "full" => TuiRenderer::EMERALD,
+            "sandboxed" => TuiRenderer::AMBER,
+            "strict" => TuiRenderer::ROSE,
+            _ => TuiRenderer::CYAN_ACCENT,
+        };
+
+        let vp = crate::cli::viewport::Viewport::current();
+
+        if vp.is_compact() {
+            let indigo = TuiRenderer::INDIGO;
+            let box_tl = TuiRenderer::BOX_TL;
+            let box_bl = TuiRenderer::BOX_BL;
+            let bold = TuiRenderer::BOLD;
+            let white = TuiRenderer::WHITE;
+            let slate = TuiRenderer::SLATE;
+            let emerald = TuiRenderer::EMERALD;
+            let reset = TuiRenderer::RESET;
+
+            format!(
+                "\n{indigo}{box_tl}─ {bold}{white}[acode]{reset} {slate}{folder_name}{reset}{emerald}{git_info}{reset}\n{indigo}{box_bl}❯{reset} "
+            )
+        } else {
+            let indigo = TuiRenderer::INDIGO;
+            let box_tl = TuiRenderer::BOX_TL;
+            let box_bl = TuiRenderer::BOX_BL;
+            let bold = TuiRenderer::BOLD;
+            let white = TuiRenderer::WHITE;
+            let slate = TuiRenderer::SLATE;
+            let emerald = TuiRenderer::EMERALD;
+            let cyan = TuiRenderer::CYAN_ACCENT;
+            let charcoal = TuiRenderer::CHARCOAL;
+            let reset = TuiRenderer::RESET;
+            let rss = metrics.process_rss_mb;
+
+            format!(
+                "\n{indigo}{box_tl}─ {bold}{white}[acode]{reset} {slate}{folder_name}{reset}{emerald}{git_info}{reset} {cyan}{model}{reset} {sec_color}{sec_mode}{reset} {charcoal}{rss}MB{reset}\n{indigo}{box_bl}❯{reset} "
+            )
+        }
     }
 
     fn append_history(line: &str) {
@@ -90,15 +110,43 @@ impl DaedalusREPL {
 
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin).lines();
+        let mut multi_line_buffer = String::new();
 
         loop {
-            let prompt_str = self.render_prompt().await;
-            print!("{}", prompt_str);
+            if multi_line_buffer.is_empty() {
+                let prompt_str = self.render_prompt().await;
+                print!("{}", prompt_str);
+            } else {
+                print!("{}... ❯{} ", TuiRenderer::SLATE, TuiRenderer::RESET);
+            }
             let _ = io::stdout().flush();
 
             match reader.next_line().await {
                 Ok(Some(line)) => {
                     let trimmed = line.trim();
+                    if trimmed.is_empty() && multi_line_buffer.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(continuation) = trimmed.strip_suffix('\\') {
+                        if !multi_line_buffer.is_empty() {
+                            multi_line_buffer.push('\n');
+                        }
+                        multi_line_buffer.push_str(continuation.trim());
+                        continue;
+                    }
+
+                    let full_line = if !multi_line_buffer.is_empty() {
+                        multi_line_buffer.push('\n');
+                        multi_line_buffer.push_str(trimmed);
+                        let res = multi_line_buffer.clone();
+                        multi_line_buffer.clear();
+                        res
+                    } else {
+                        trimmed.to_string()
+                    };
+
+                    let trimmed = full_line.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
@@ -185,14 +233,37 @@ impl DaedalusREPL {
                         trimmed
                     };
 
+                    let folder_name = self
+                        .orchestrator
+                        .workspace_root
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("project")
+                        .to_string();
+
+                    TuiRenderer::set_terminal_title(&format!(
+                        "acode: [Working] {} - {}",
+                        self.orchestrator.provider.config.model, folder_name
+                    ));
+
                     println!(
-                        "{}[ACODE] Dispatching to {} ({})...{}\n",
-                        TuiRenderer::DIM,
+                        "\n{}╭─ [ACODE DISPATCH] ─── {}{} ({}){}",
+                        TuiRenderer::INDIGO,
+                        TuiRenderer::CYAN_ACCENT,
                         self.orchestrator.provider.config.model,
                         self.orchestrator.provider.config.provider,
                         TuiRenderer::RESET
                     );
+
+                    let task_start = std::time::Instant::now();
                     let mut streamed_any = false;
+                    let mut token_buffer = String::new();
+                    let mut tick_counter = 0usize;
+                    let mut last_tool_start = std::time::Instant::now();
+                    let mut files_modified_tracker = Vec::new();
+                    let mut tools_called_count = 0usize;
+                    let cost_tracker = self.orchestrator.cost_tracker.clone();
+
                     let res = self
                         .orchestrator
                         .run_task(effective_prompt, |event| match event {
@@ -201,25 +272,46 @@ impl DaedalusREPL {
                                     println!();
                                     streamed_any = false;
                                 }
-                                TuiRenderer::print_thinking(s);
+                                TuiRenderer::print_thinking_animated(s, tick_counter, task_start);
+                                tick_counter += 1;
                             }
                             AgentEvent::Token(s) => {
-                                print!("{}", s);
-                                let _ = io::stdout().flush();
+                                if !streamed_any {
+                                    TuiRenderer::clear_line();
+                                }
+                                token_buffer.push_str(s);
+                                while let Some(pos) = token_buffer.find('\n') {
+                                    let line: String = token_buffer.drain(..=pos).collect();
+                                    let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+                                    println!("{}", TuiRenderer::render_markdown_line(trimmed));
+                                }
                                 streamed_any = true;
                             }
                             AgentEvent::ToolStart { name, args } => {
                                 if streamed_any {
+                                    if !token_buffer.is_empty() {
+                                        println!(
+                                            "{}",
+                                            TuiRenderer::render_markdown_line(&token_buffer)
+                                        );
+                                        token_buffer.clear();
+                                    }
                                     println!();
                                     streamed_any = false;
                                 }
+                                TuiRenderer::clear_line();
+                                last_tool_start = std::time::Instant::now();
+                                tools_called_count += 1;
                                 TuiRenderer::print_tool_start(name, args);
                             }
                             AgentEvent::ToolEnd {
                                 name,
                                 success,
                                 output,
-                            } => TuiRenderer::print_tool_end(name, success, output),
+                            } => {
+                                let dur = last_tool_start.elapsed();
+                                TuiRenderer::print_tool_end_timed(name, success, output, Some(dur));
+                            }
                             AgentEvent::TestResult {
                                 command,
                                 passed,
@@ -231,9 +323,18 @@ impl DaedalusREPL {
                                 ..
                             } => {
                                 if streamed_any {
+                                    if !token_buffer.is_empty() {
+                                        println!(
+                                            "{}",
+                                            TuiRenderer::render_markdown_line(&token_buffer)
+                                        );
+                                        token_buffer.clear();
+                                    }
                                     println!();
                                     streamed_any = false;
                                 }
+                                TuiRenderer::clear_line();
+                                files_modified_tracker = files_modified.to_vec();
                                 if !files_modified.is_empty() {
                                     TuiRenderer::print_success(&format!(
                                         "Modified: {}",
@@ -242,25 +343,44 @@ impl DaedalusREPL {
                                 } else if tools_called > 0 {
                                     TuiRenderer::print_success("Task executed successfully.");
                                 }
+
+                                let m = cost_tracker.get_metrics();
+                                TuiRenderer::print_turn_summary(
+                                    task_start.elapsed(),
+                                    tools_called,
+                                    files_modified,
+                                    Some(m.prompt_tokens + m.completion_tokens),
+                                    Some(m.total_cost_usd),
+                                );
                             }
                             AgentEvent::Error(err) => {
                                 if streamed_any {
+                                    if !token_buffer.is_empty() {
+                                        println!(
+                                            "{}",
+                                            TuiRenderer::render_markdown_line(&token_buffer)
+                                        );
+                                        token_buffer.clear();
+                                    }
                                     println!();
                                     streamed_any = false;
                                 }
+                                TuiRenderer::clear_line();
                                 TuiRenderer::print_error(err);
                             }
                         })
                         .await;
 
+                    TuiRenderer::set_terminal_title(&format!("acode: [Ready] - {}", folder_name));
+
+                    if task_start.elapsed() >= std::time::Duration::from_secs(5) {
+                        TuiRenderer::bell();
+                    }
+
                     match res {
                         Ok(summary) => {
-                            if !summary.is_empty() {
-                                if !streamed_any {
-                                    println!("{}\n", summary);
-                                } else {
-                                    println!();
-                                }
+                            if !summary.is_empty() && !streamed_any {
+                                println!("{}\n", summary);
                             }
                         }
                         Err(e) => {

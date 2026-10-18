@@ -3,6 +3,7 @@
 
 use crate::agent::orchestrator::{AgentEvent, DaedalusOrchestrator};
 use crate::cli::tui::TuiRenderer;
+use crate::cli::viewport::{pad_box_line, Viewport};
 
 pub async fn handle(
     cmd: &str,
@@ -122,30 +123,120 @@ pub async fn handle(
         }
         "/cost" => {
             let traces = orchestrator.chronicle.get_recent_traces(10);
-            if traces.is_empty() {
-                println!(
-                    "{}No telemetry traces recorded in current session.{}\n",
-                    TuiRenderer::DIM,
-                    TuiRenderer::RESET
-                );
+            let metrics = orchestrator.cost_tracker.get_metrics();
+            let total_cost = metrics.total_cost_usd;
+            let total_tokens = metrics.prompt_tokens + metrics.completion_tokens;
+
+            let vp = Viewport::current();
+            let width = vp.card_width(64);
+            let title = if width < 42 {
+                "╭─ [COST] "
             } else {
-                let total_cost: f64 = traces.iter().map(|t| t.cost_usd).sum();
-                let total_tokens: usize = traces.iter().map(|t| t.tokens.total).sum();
-                println!(
-                    "\n{}[CHRONICLE TELEMETRY]{}",
-                    TuiRenderer::BOLD,
+                "╭─ [SESSION COST & TOKEN TELEMETRY] "
+            };
+            let rem_top = width.saturating_sub(title.chars().count() + 1);
+            let top_border = format!(
+                "{}{title}{}╮{}",
+                TuiRenderer::INDIGO,
+                "─".repeat(rem_top),
+                TuiRenderer::RESET
+            );
+            let bot_border = format!(
+                "{INDIGO}╰{}╯{RESET}",
+                "─".repeat(width.saturating_sub(2)),
+                INDIGO = TuiRenderer::INDIGO,
+                RESET = TuiRenderer::RESET
+            );
+
+            println!("\n{}", top_border);
+            println!(
+                "{}",
+                pad_box_line(
+                    &format!(
+                        "  Model:               {}{}",
+                        TuiRenderer::CYAN_ACCENT,
+                        orchestrator.provider.config.model
+                    ),
+                    width,
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::BOX_V,
                     TuiRenderer::RESET
-                );
-                println!(
-                    "Total Tokens: {}{}{} · Total Estimated Cost: {}${:.6}{}",
-                    TuiRenderer::CYAN,
-                    total_tokens,
-                    TuiRenderer::RESET,
-                    TuiRenderer::GREEN,
-                    total_cost,
+                )
+            );
+            println!(
+                "{}",
+                pad_box_line(
+                    &format!(
+                        "  Total Turns:         {}{}",
+                        TuiRenderer::WHITE,
+                        metrics.turns_count
+                    ),
+                    width,
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::BOX_V,
                     TuiRenderer::RESET
-                );
-                println!("Recent Spans:");
+                )
+            );
+            println!(
+                "{}",
+                pad_box_line(
+                    &format!(
+                        "  Prompt Tokens:       {}{} tokens",
+                        TuiRenderer::WHITE,
+                        metrics.prompt_tokens
+                    ),
+                    width,
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::BOX_V,
+                    TuiRenderer::RESET
+                )
+            );
+            println!(
+                "{}",
+                pad_box_line(
+                    &format!(
+                        "  Completion Tokens:   {}{} tokens",
+                        TuiRenderer::WHITE,
+                        metrics.completion_tokens
+                    ),
+                    width,
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::BOX_V,
+                    TuiRenderer::RESET
+                )
+            );
+            println!(
+                "{}",
+                pad_box_line(
+                    &format!(
+                        "  Total Tokens:        {}{} tokens",
+                        TuiRenderer::BOLD,
+                        total_tokens
+                    ),
+                    width,
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::BOX_V,
+                    TuiRenderer::RESET
+                )
+            );
+            println!(
+                "{}",
+                pad_box_line(
+                    &format!(
+                        "  Estimated USD Cost:  {}${:.5}",
+                        TuiRenderer::EMERALD,
+                        total_cost
+                    ),
+                    width,
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::BOX_V,
+                    TuiRenderer::RESET
+                )
+            );
+            println!("{}\n", bot_border);
+
+            if !traces.is_empty() {
+                println!("Recent Model Spans:");
                 for t in &traces {
                     let time = if t.timestamp.len() >= 19 {
                         &t.timestamp[11..19]
@@ -158,6 +249,87 @@ pub async fn handle(
                     );
                 }
                 println!();
+            }
+            true
+        }
+        "/timer" | "/countdown" => {
+            if arg.is_empty() {
+                println!(
+                    "{}Usage: /timer <duration> [label]{}\n  Examples: /timer 5s, /timer 10, /timer 2m \"build check\"\n",
+                    TuiRenderer::ROSE,
+                    TuiRenderer::RESET
+                );
+                return true;
+            }
+            let parts: Vec<&str> = arg.split_whitespace().collect();
+            let raw_dur = parts[0];
+            let label = if parts.len() > 1 {
+                parts[1..].join(" ")
+            } else {
+                format!("{} timer", raw_dur)
+            };
+
+            let seconds = if let Some(stripped) = raw_dur.strip_suffix('m') {
+                stripped.parse::<u64>().unwrap_or(1) * 60
+            } else if let Some(stripped) = raw_dur.strip_suffix('s') {
+                stripped.parse::<u64>().unwrap_or(1)
+            } else {
+                raw_dur.parse::<u64>().unwrap_or(5)
+            };
+
+            println!(
+                "\n{}╭─ [TIMER STARTED] ─── {}{} ({}s)",
+                TuiRenderer::INDIGO,
+                TuiRenderer::WHITE,
+                label,
+                seconds
+            );
+
+            let start = std::time::Instant::now();
+            let total_dur = std::time::Duration::from_secs(seconds);
+            let mut tick = 0;
+
+            while start.elapsed() < total_dur {
+                let remaining = total_dur.saturating_sub(start.elapsed());
+                let rem_str = TuiRenderer::format_duration(remaining);
+                let spinner = TuiRenderer::spinner_frame(tick);
+                print!(
+                    "\r\x1b[2K{}│{} {}{} {}remaining: {}{}{}",
+                    TuiRenderer::INDIGO,
+                    TuiRenderer::RESET,
+                    TuiRenderer::CYAN_ACCENT,
+                    spinner,
+                    TuiRenderer::SLATE,
+                    TuiRenderer::AMBER,
+                    rem_str,
+                    TuiRenderer::RESET
+                );
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                tick += 1;
+            }
+
+            print!("\r\x1b[2K");
+            println!(
+                "{}╰─ [OK] Timer '{}' completed! {}\x07\n",
+                TuiRenderer::INDIGO,
+                label,
+                TuiRenderer::RESET
+            );
+            true
+        }
+        "/outline" | "/tree" => {
+            if arg.is_empty() {
+                println!(
+                    "{}Usage: /outline <file_path>{}\n  Example: /outline src/main.rs\n",
+                    TuiRenderer::ROSE,
+                    TuiRenderer::RESET
+                );
+                return true;
+            }
+            match orchestrator.tools.outline.file_outline(arg) {
+                Ok(outline) => println!("\n{}\n", outline),
+                Err(e) => println!("{}[FAIL] {}\n", TuiRenderer::ROSE, e),
             }
             true
         }
@@ -1611,178 +1783,138 @@ pub fn print_help() {
         TuiRenderer::BOLD,
         TuiRenderer::RESET
     );
+
     println!(
-        "  {}/help{}            - Show this command reference",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!("  {}/security{}        - Manage agent security mode (/security mode full|sandboxed|strict)", TuiRenderer::CYAN, TuiRenderer::RESET);
-    println!("  {}/sandbox [action]{} - Shadow git worktrees (/sandbox start [name], merge, abort, list)", TuiRenderer::CYAN, TuiRenderer::RESET);
-    println!(
-        "  {}/memory{}          - Inspect or update persistent USER.md and MEMORY.md",
-        TuiRenderer::CYAN,
+        "\n{}── Core Session ──────────────────────────{}",
+        TuiRenderer::INDIGO,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/blackbox{}        - View BlackBox flight recorder telemetry & audit stream",
+        "  {}/help{}             Show command reference",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/daemons{}         - List and inspect background process daemons",
+        "  {}/info{}             Show active workspace & context",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/daemon <action>{} - Manage daemon (logs <id>, kill <id>, start <cmd>)",
+        "  {}/clear{}            Clear console & reset context",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/deps [action]{}   - Cross-ecosystem package manager (list, add, rm, audit)",
+        "  {}/cost{}             Token usage & USD cost telemetry",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/docker [action]{} - Container fleet manager (ps, logs, inspect, up, down)",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!("  {}/symbols <path>{}  - Extract all symbols or find symbol definition (/symbols find <name> | /symbols map)", TuiRenderer::CYAN, TuiRenderer::RESET);
-    println!(
-        "  {}/rename <o> <n>{}  - Semantic identifier renaming across workspace",
+        "  {}/model <name>{}     Switch active model",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/tasks{}           - View active goal decomposition task graph and checklist",
+        "  {}/security <mode>{}  Set mode (full | sandboxed | strict)",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/task <action>{}   - Manage task graph (new <goal>, add <step>, done, clear)",
+        "  {}/exit{}             Exit REPL session",
+        TuiRenderer::CYAN,
+        TuiRenderer::RESET
+    );
+
+    println!(
+        "\n{}── Coding, AST & Tasks ───────────────────{}",
+        TuiRenderer::INDIGO,
+        TuiRenderer::RESET
+    );
+    println!(
+        "  {}/outline <path>{}   Tree-sitter AST structural outline",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/plan <goal>{}     - Architect Mode: generate implementation plan before coding",
+        "  {}/symbols <path>{}   Extract declarations or find callsite",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/info{}            - Display active workspace root, git branch, and context",
+        "  {}/rename <o> <n>{}   Semantic AST identifier renaming",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/cd <path|@alias>{} - Switch active workspace root directory",
+        "  {}/plan <goal>{}      Architect Mode: generate plan",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/web <query>{}     - Direct terminal web search (DuckDuckGo + HackerNews)",
+        "  {}/tasks{}            Active goal decomposition graph",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/fetch <url>{}     - Extract readable Markdown from any URL, paper, or transcript",
+        "  {}/timer <sec>{}      Countdown timer or stopwatch",
+        TuiRenderer::CYAN,
+        TuiRenderer::RESET
+    );
+
+    println!(
+        "\n{}── Git, Sandbox & Execution ──────────────{}",
+        TuiRenderer::INDIGO,
+        TuiRenderer::RESET
+    );
+    println!(
+        "  {}/diff{}             Inspect uncommitted git diff",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/test [cmd]{}      - Execute project test suite or custom test command",
+        "  {}/undo{}             Revert uncommitted & untracked files",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/repos{}           - Discover sibling workspaces in parent directory",
+        "  {}/test [cmd]{}       Execute verification suite",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/history{}         - Display recent command history",
+        "  {}/sandbox [act]{}    Shadow worktrees (start, merge, abort)",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/undo{}            - Revert all uncommitted working tree changes",
+        "  {}/daemons{}          List background process daemons",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/diff{}            - Inspect working tree git diff",
+        "  {}/mcp [act]{}        MCP server suite management",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );
+
     println!(
-        "  {}/status{}          - Display git repository status",
-        TuiRenderer::CYAN,
+        "\n{}── Shortcuts ─────────────────────────────{}",
+        TuiRenderer::INDIGO,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/commit <msg>{}    - Commit all changes with standard author",
-        TuiRenderer::CYAN,
+        "  {}!<cmd>{}              Execute direct host shell command",
+        TuiRenderer::AMBER,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/cost{}            - Display Chronicle token usage and USD costs",
-        TuiRenderer::CYAN,
+        "  {}!&<cmd>{}             Spawn non-blocking background daemon",
+        TuiRenderer::VIOLET,
         TuiRenderer::RESET
     );
     println!(
-        "  {}/audit{}           - Run Argus AST code review and secret scan",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/tunnel <port>{}  - Spawn a public HTTPS Beacon tunnel",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!("  {}/swarm <goal>{}    - Autonomous multi-agent swarm delegation (Explorer -> Coder -> Verifier)", TuiRenderer::CYAN, TuiRenderer::RESET);
-    println!(
-        "  {}/mcp [action]{}    - Model Context Protocol server suite (list, refresh, add, remove)",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/host{}            - Live host metrics (CPU cores, free RAM, process RSS, uptime)",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/pulse{}           - View live OS host memory and CPU metrics",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/model <name>{}   - Switch active LLM model",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/key <p> <key>{}   - Configure API key (gemini, anthropic, openai, powerbox)",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/clear{}           - Clear console and reset conversational context",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}/exit{}            - Terminate REPL session",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}!<cmd>{}            - Direct synchronous shell execution bypass",
-        TuiRenderer::YELLOW,
-        TuiRenderer::RESET
-    );
-    println!(
-        "  {}!&<cmd>{}           - Direct non-blocking background daemon spawn\n",
-        TuiRenderer::YELLOW,
+        "  {}\\ (at line end){}     Continue typing on next line\n",
+        TuiRenderer::SLATE,
         TuiRenderer::RESET
     );
 }

@@ -245,7 +245,8 @@ impl PermissionGate {
 
         // Tools operating on filesystem paths
         let raw_path = match tool_name {
-            "view_file" | "patch_file" | "write_file" | "extract_symbols" | "scaffold_test" => args
+            "view_file" | "patch_file" | "write_file" | "extract_symbols" | "scaffold_test"
+            | "file_outline" => args
                 .get("path")
                 .or_else(|| args.get("file"))
                 .or_else(|| args.get("file_path"))
@@ -487,6 +488,8 @@ impl PermissionGate {
                 | "search_code"
                 | "extract_symbols"
                 | "find_symbols"
+                | "file_outline"
+                | "set_timer"
                 | "git_status"
                 | "git_diff"
                 | "list_workspaces"

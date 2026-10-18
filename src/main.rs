@@ -14,7 +14,6 @@ mod tools;
 
 use clap::Parser;
 use std::env;
-use std::io::Write;
 
 use crate::agent::orchestrator::{AgentEvent, DaedalusOrchestrator};
 use crate::cli::commands::SlashCommandHandler;
@@ -102,7 +101,13 @@ async fn main() {
             full_prompt
         );
 
+        let task_start = std::time::Instant::now();
         let mut streamed_any = false;
+        let mut token_buffer = String::new();
+        let mut tick_counter = 0usize;
+        let mut last_tool_start = std::time::Instant::now();
+        let cost_tracker = orchestrator.cost_tracker.clone();
+
         let res = orchestrator
             .run_task(&full_prompt, |event| match event {
                 AgentEvent::Thinking(s) => {
@@ -110,25 +115,42 @@ async fn main() {
                         println!();
                         streamed_any = false;
                     }
-                    TuiRenderer::print_thinking(s);
+                    TuiRenderer::print_thinking_animated(s, tick_counter, task_start);
+                    tick_counter += 1;
                 }
                 AgentEvent::Token(s) => {
-                    print!("{}", s);
-                    let _ = std::io::stdout().flush();
+                    if !streamed_any {
+                        TuiRenderer::clear_line();
+                    }
+                    token_buffer.push_str(s);
+                    while let Some(pos) = token_buffer.find('\n') {
+                        let line: String = token_buffer.drain(..=pos).collect();
+                        let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+                        println!("{}", TuiRenderer::render_markdown_line(trimmed));
+                    }
                     streamed_any = true;
                 }
                 AgentEvent::ToolStart { name, args } => {
                     if streamed_any {
+                        if !token_buffer.is_empty() {
+                            println!("{}", TuiRenderer::render_markdown_line(&token_buffer));
+                            token_buffer.clear();
+                        }
                         println!();
                         streamed_any = false;
                     }
+                    TuiRenderer::clear_line();
+                    last_tool_start = std::time::Instant::now();
                     TuiRenderer::print_tool_start(name, args);
                 }
                 AgentEvent::ToolEnd {
                     name,
                     success,
                     output,
-                } => TuiRenderer::print_tool_end(name, success, output),
+                } => {
+                    let dur = last_tool_start.elapsed();
+                    TuiRenderer::print_tool_end_timed(name, success, output, Some(dur));
+                }
                 AgentEvent::TestResult {
                     command,
                     passed,
@@ -140,9 +162,14 @@ async fn main() {
                     ..
                 } => {
                     if streamed_any {
+                        if !token_buffer.is_empty() {
+                            println!("{}", TuiRenderer::render_markdown_line(&token_buffer));
+                            token_buffer.clear();
+                        }
                         println!();
                         streamed_any = false;
                     }
+                    TuiRenderer::clear_line();
                     if !files_modified.is_empty() {
                         TuiRenderer::print_success(&format!(
                             "Modified: {}",
@@ -151,12 +178,26 @@ async fn main() {
                     } else if tools_called > 0 {
                         TuiRenderer::print_success("Task executed successfully.");
                     }
+
+                    let m = cost_tracker.get_metrics();
+                    TuiRenderer::print_turn_summary(
+                        task_start.elapsed(),
+                        tools_called,
+                        files_modified,
+                        Some(m.prompt_tokens + m.completion_tokens),
+                        Some(m.total_cost_usd),
+                    );
                 }
                 AgentEvent::Error(err) => {
                     if streamed_any {
+                        if !token_buffer.is_empty() {
+                            println!("{}", TuiRenderer::render_markdown_line(&token_buffer));
+                            token_buffer.clear();
+                        }
                         println!();
                         streamed_any = false;
                     }
+                    TuiRenderer::clear_line();
                     TuiRenderer::print_error(err);
                 }
             })
@@ -164,12 +205,8 @@ async fn main() {
 
         match res {
             Ok(summary) => {
-                if !summary.is_empty() {
-                    if !streamed_any {
-                        println!("{}\n", summary);
-                    } else {
-                        println!();
-                    }
+                if !summary.is_empty() && !streamed_any {
+                    println!("{}\n", summary);
                 }
             }
             Err(e) => {

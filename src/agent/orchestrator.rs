@@ -53,6 +53,7 @@ pub struct DaedalusOrchestrator {
     pub security: PermissionGate,
     pub task_graph: Option<TaskGraph>,
     pub active_sandbox: Option<crate::tools::sandbox::ShadowSession>,
+    pub cost_tracker: crate::telemetry::cost::CostTracker,
     pub history: Vec<LLMMessage>,
     pub session_diffs: Vec<(String, String)>,
 }
@@ -76,6 +77,7 @@ impl DaedalusOrchestrator {
             security: PermissionGate::new(override_security),
             task_graph: None,
             active_sandbox: None,
+            cost_tracker: crate::telemetry::cost::CostTracker::new(),
             history: Vec::new(),
             session_diffs: Vec::new(),
             workspace_root: p,
@@ -128,7 +130,9 @@ impl DaedalusOrchestrator {
             4. AUTONOMOUS VERIFICATION & REPAIR: When you modify or create code, always verify it! If the workspace contains test files or scripts (e.g. test.js, tests/, Cargo.toml, pytest), run them (using run_command e.g. 'node test.js' or 'cargo test') to verify that your implementation satisfies all test assertions. If errors occur, inspect compiler/test output and self-heal before concluding.\n\
             5. SURGICAL PRECISION: Prefer patch_file over write_file when editing existing files to avoid wiping out code.\n\
             6. CONCISE HIGH-DENSITY ANSWERS: For simple questions or conversational remarks, reply directly and concisely with [INFO] or [OK]. Never output [FAIL] on normal conversational responses.\n\
-            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, repo_map, scaffold_test, manage_sandbox.\n\
+            7. TOOLS: view_file, patch_file, write_file, run_command, list_dir, search_code, change_workspace, git_status, git_diff, argus_audit, beacon_tunnel, web_search, web_fetch, run_tests, list_workspaces, update_memory, start_daemon, list_daemons, daemon_logs, kill_daemon, manage_dependencies, manage_containers, extract_symbols, find_symbols, rename_symbol, repo_map, scaffold_test, manage_sandbox, set_timer, file_outline.\n\
+               - set_timer: Pause execution or countdown for a specified number of seconds.\n\
+               - file_outline: Fast Tree-sitter structural outline of functions, structs, classes, and methods.\n\
                - web_search & web_fetch: Multi-source web search and clean markdown extraction.\n\
                - manage_dependencies: Direct interface to Cargo, NPM, PNPM, Bun, Yarn, Pip, and Go.\n\
                - manage_containers: Docker/Podman container status, logs, and compose up/down.\n\
@@ -383,6 +387,11 @@ impl DaedalusOrchestrator {
                 self.history.len(),
                 latency_ms,
                 200,
+            );
+            self.cost_tracker.record_turn(
+                &prompt_text,
+                &clean_content,
+                &self.provider.config.model,
             );
 
             // Append assistant message

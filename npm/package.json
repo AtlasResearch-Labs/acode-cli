@@ -1,6 +1,6 @@
 {
   "name": "acode-cli",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Pure Rust Engine)",
   "main": "index.js",
   "bin": {

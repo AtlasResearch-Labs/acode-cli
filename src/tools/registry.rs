@@ -10,10 +10,12 @@ use crate::tools::deps::DependencyManager;
 use crate::tools::fs::FsTools;
 use crate::tools::git::GitTools;
 use crate::tools::mcp::McpManager;
+use crate::tools::outline::OutlineTools;
 use crate::tools::pillars::PillarTools;
 use crate::tools::sandbox::ShadowSandbox;
 use crate::tools::shell::ShellTools;
 use crate::tools::symbols::SymbolEngine;
+use crate::tools::timer::TimerTools;
 use crate::tools::web::WebTools;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +37,8 @@ pub struct ToolRegistry {
     pub symbols: SymbolEngine,
     pub sandbox: ShadowSandbox,
     pub mcp: McpManager,
+    pub timer: TimerTools,
+    pub outline: OutlineTools,
     pub workspace_root: std::path::PathBuf,
 }
 
@@ -53,6 +57,8 @@ impl ToolRegistry {
             symbols: SymbolEngine::new(&p),
             sandbox: ShadowSandbox::new(&p),
             mcp: McpManager::new(&p),
+            timer: TimerTools::new(),
+            outline: OutlineTools::new(&p),
             workspace_root: p,
         }
     }
@@ -401,6 +407,29 @@ impl ToolRegistry {
                         }
                     },
                     "required": ["action"]
+                }),
+            },
+            ToolDefinition {
+                name: "set_timer".to_string(),
+                description: "Asynchronously pause or set a countdown timer for a given duration in seconds with an optional descriptive label.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "seconds": { "type": "integer", "description": "Number of seconds to wait (max: 3600)" },
+                        "label": { "type": "string", "description": "Optional descriptive label for the timer" }
+                    },
+                    "required": ["seconds"]
+                }),
+            },
+            ToolDefinition {
+                name: "file_outline".to_string(),
+                description: "Extract a concise, high-speed structural AST code skeleton (functions, classes, structs, traits, methods, and line numbers) from a source file using Tree-sitter without consuming full file content.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative file path" }
+                    },
+                    "required": ["path"]
                 }),
             },
         ];
@@ -1192,6 +1221,35 @@ impl ToolRegistry {
                         }
                     }
                     _ => (false, format!("Unknown sandbox action: '{}'. Use start, merge, abort, list, or status.", action)),
+                }
+            }
+            "set_timer" => {
+                let seconds = args.get("seconds").and_then(|v| v.as_u64()).unwrap_or(1);
+                let label = args
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                match self.timer.set_timer(seconds, label).await {
+                    Ok(outcome) => (
+                        true,
+                        format!(
+                            "[OK] Timer '{}' completed after {:.1}s.",
+                            outcome.label,
+                            outcome.elapsed_millis as f64 / 1000.0
+                        ),
+                    ),
+                    Err(e) => (false, e),
+                }
+            }
+            "file_outline" => {
+                let path = args
+                    .get("path")
+                    .or_else(|| args.get("file"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                match self.outline.file_outline(path) {
+                    Ok(outline) => (true, outline),
+                    Err(e) => (false, e),
                 }
             }
             _ => (false, format!("Unknown tool: {}", name)),

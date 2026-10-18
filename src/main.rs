@@ -45,8 +45,51 @@ struct CliArgs {
     security: Option<String>,
 }
 
+#[cfg(windows)]
+fn init_windows_console() {
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetConsoleCP(wCodePageID: u32) -> i32;
+            fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
+            fn GetStdHandle(nStdHandle: i32) -> isize;
+            fn GetConsoleMode(hConsoleHandle: isize, lpMode: *mut u32) -> i32;
+            fn SetConsoleMode(hConsoleHandle: isize, dwMode: u32) -> i32;
+        }
+
+        // 1. Force UTF-8 (65001) for console input and output
+        SetConsoleCP(65001);
+        SetConsoleOutputCP(65001);
+
+        // 2. Enable Virtual Terminal Processing (ANSI escape sequences) on stdout and stderr
+        const STD_OUTPUT_HANDLE: i32 = -11;
+        const STD_ERROR_HANDLE: i32 = -12;
+        const ENABLE_PROCESSED_OUTPUT: u32 = 0x0001;
+        const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+
+        let h_out = GetStdHandle(STD_OUTPUT_HANDLE);
+        if h_out != 0 && h_out != -1 {
+            let mut mode: u32 = 0;
+            if GetConsoleMode(h_out, &mut mode) != 0 {
+                SetConsoleMode(h_out, mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
+        }
+
+        let h_err = GetStdHandle(STD_ERROR_HANDLE);
+        if h_err != 0 && h_err != -1 {
+            let mut mode: u32 = 0;
+            if GetConsoleMode(h_err, &mut mode) != 0 {
+                SetConsoleMode(h_err, mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    #[cfg(windows)]
+    init_windows_console();
+
     let _ = dotenvy::dotenv();
 
     // Global fallback from ~/.daedalus/.env

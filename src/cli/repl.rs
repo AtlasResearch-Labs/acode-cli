@@ -139,7 +139,12 @@ impl DaedalusREPL {
 
             let prompt_prefix = Self::active_prompt_prefix();
 
-            let submitted_opt = if io::stdin().is_terminal() {
+            let use_raw_mode = io::stdin().is_terminal()
+                && std::env::var("ACODE_RAW")
+                    .map(|v| v != "0" && v != "false")
+                    .unwrap_or(true);
+
+            let submitted_opt = if use_raw_mode {
                 TuiRenderer::osc_input_start();
                 let ast_symbols = self.orchestrator.tools.symbols.get_all_symbol_names();
                 match input_engine.read_line_interactive(

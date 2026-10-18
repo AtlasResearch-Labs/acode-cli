@@ -52,14 +52,20 @@ impl TerminalInputEngine {
 
     /// Check if terminal emulator safely supports Kitty progressive keyboard protocol
     pub fn is_kitty_protocol_supported() -> bool {
-        if std::env::var("WT_SESSION").is_ok()
-            || std::env::var("KITTY_WINDOW_ID").is_ok()
-            || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
-            || std::env::var("WEZTERM_EXECUTABLE").is_ok()
+        #[cfg(windows)]
         {
-            matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true))
-        } else {
             false
+        }
+        #[cfg(not(windows))]
+        {
+            if std::env::var("KITTY_WINDOW_ID").is_ok()
+                || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+                || std::env::var("WEZTERM_EXECUTABLE").is_ok()
+            {
+                matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true))
+            } else {
+                false
+            }
         }
     }
 
@@ -626,13 +632,17 @@ impl TerminalInputEngine {
 
         match (key.code, key.modifiers) {
             // Disambiguated Shift+Enter (Kitty CSI 13;2 u) or Ctrl+J fallback
-            (KeyCode::Enter, KeyModifiers::SHIFT) | (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
+            (KeyCode::Enter, KeyModifiers::SHIFT)
+            | (KeyCode::Char('\n'), KeyModifiers::SHIFT)
+            | (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
                 self.insert_newline();
                 Some(InputAction::Redraw)
             }
 
-            // Plain Enter submits prompt
-            (KeyCode::Enter, KeyModifiers::NONE) => {
+            // Plain Enter submits prompt (handles KeyCode::Enter, '\r', '\n')
+            (KeyCode::Enter, KeyModifiers::NONE)
+            | (KeyCode::Char('\r'), _)
+            | (KeyCode::Char('\n'), KeyModifiers::NONE) => {
                 let submitted = std::mem::take(&mut self.buffer);
                 self.cursor_pos = 0;
                 self.history_index = None;
@@ -699,7 +709,9 @@ impl TerminalInputEngine {
             }
 
             // Editing operations
-            (KeyCode::Backspace, _) => {
+            (KeyCode::Backspace, _)
+            | (KeyCode::Char('\x08'), _)
+            | (KeyCode::Char('\x7f'), _) => {
                 self.delete_backspace();
                 Some(InputAction::Redraw)
             }
@@ -758,8 +770,8 @@ impl TerminalInputEngine {
                 Some(InputAction::OpenMenu)
             }
 
-            // Normal printable character input
-            (KeyCode::Char(c), _) => {
+            // Normal printable character input (exclude control characters)
+            (KeyCode::Char(c), _) if !c.is_control() => {
                 self.insert_char(c);
                 Some(InputAction::Redraw)
             }
@@ -872,5 +884,33 @@ mod tests {
         assert_eq!(engine.buffer, "cargo test");
         engine.history_down();
         assert_eq!(engine.buffer, "");
+    }
+
+    #[test]
+    fn test_input_engine_enter_and_backspace_variations() {
+        let mut engine = TerminalInputEngine::new(vec![]);
+        engine.insert_char('a');
+        engine.insert_char('b');
+        assert_eq!(engine.buffer, "ab");
+
+        // Backspace as '\x08'
+        let bs_event = KeyEvent::new(KeyCode::Char('\x08'), KeyModifiers::NONE);
+        assert_eq!(engine.handle_key(bs_event), Some(InputAction::Redraw));
+        assert_eq!(engine.buffer, "a");
+
+        // Backspace as '\x7f'
+        let del_event = KeyEvent::new(KeyCode::Char('\x7f'), KeyModifiers::NONE);
+        assert_eq!(engine.handle_key(del_event), Some(InputAction::Redraw));
+        assert_eq!(engine.buffer, "");
+
+        // Type task and press Enter via '\r'
+        engine.insert_char('t');
+        let enter_cr = KeyEvent::new(KeyCode::Char('\r'), KeyModifiers::NONE);
+        assert_eq!(engine.handle_key(enter_cr), Some(InputAction::Submit("t".to_string())));
+
+        // Type task and press Enter via KeyCode::Enter
+        engine.insert_char('o');
+        let enter_code = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(engine.handle_key(enter_code), Some(InputAction::Submit("o".to_string())));
     }
 }

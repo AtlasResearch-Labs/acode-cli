@@ -4,8 +4,12 @@
 //! AST repository map generation, and AST-precise cross-file renaming.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AstLanguage {
@@ -127,14 +131,79 @@ pub struct AstRepoMap {
     pub file_analyses: Vec<AstFileAnalysis>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedAstEntry {
+    pub file_path: PathBuf,
+    pub rel_path: String,
+    pub content_hash: String,
+    pub file_size: u64,
+    pub modified_time: SystemTime,
+    pub analysis: AstFileAnalysis,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct IndexCacheStats {
+    pub hits: usize,
+    pub misses: usize,
+    pub cached_files: usize,
+    pub total_symbols: usize,
+    pub merkle_root: String,
+}
+
+#[derive(Default)]
+struct DirNode {
+    files: HashMap<String, String>,
+    subdirs: HashMap<String, DirNode>,
+}
+
+impl DirNode {
+    fn insert(&mut self, path_parts: &[&str], hash: String) {
+        if path_parts.is_empty() {
+            return;
+        }
+        if path_parts.len() == 1 {
+            self.files.insert(path_parts[0].to_string(), hash);
+        } else {
+            let subdir = self.subdirs.entry(path_parts[0].to_string()).or_default();
+            subdir.insert(&path_parts[1..], hash);
+        }
+    }
+
+    fn compute_hash(&self) -> String {
+        let mut entries: Vec<(String, String)> = Vec::new();
+        for (name, hash) in &self.files {
+            entries.push((name.clone(), format!("blob:{}", hash)));
+        }
+        for (name, subdir) in &self.subdirs {
+            let sub_hash = subdir.compute_hash();
+            entries.push((name.clone(), format!("tree:{}", sub_hash)));
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut hasher = Sha256::new();
+        for (name, typed_hash) in entries {
+            hasher.update(name.as_bytes());
+            hasher.update(b":");
+            hasher.update(typed_hash.as_bytes());
+            hasher.update(b"\n");
+        }
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+#[derive(Clone)]
 pub struct SymbolEngine {
     pub workspace_root: PathBuf,
+    pub cache: Arc<RwLock<HashMap<PathBuf, CachedAstEntry>>>,
+    pub stats: Arc<RwLock<(usize, usize)>>,
 }
 
 impl SymbolEngine {
     pub fn new<P: AsRef<Path>>(workspace_root: P) -> Self {
         Self {
             workspace_root: workspace_root.as_ref().to_path_buf(),
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            stats: Arc::new(RwLock::new((0, 0))),
         }
     }
 
@@ -145,13 +214,16 @@ impl SymbolEngine {
     }
 
     /// Fully analyzes a source file extracting symbols, callsites, and imports via AST
+    /// with two-tier incremental caching (metadata mtime/len fast-path + SHA-256 hash check).
     pub fn analyze_file(&self, file_path: &Path) -> Result<AstFileAnalysis, String> {
         if !file_path.exists() {
             return Err(format!("File '{}' does not exist.", file_path.display()));
         }
 
-        let content = fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read file '{}': {}", file_path.display(), e))?;
+        let metadata = fs::metadata(file_path)
+            .map_err(|e| format!("Failed to read metadata for '{}': {}", file_path.display(), e))?;
+        let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let file_size = metadata.len();
 
         let rel_path = file_path
             .strip_prefix(&self.workspace_root)
@@ -159,8 +231,60 @@ impl SymbolEngine {
             .to_string_lossy()
             .to_string();
 
+        // 1. Fast Tier: In-memory cache lookup with mtime & file size check (< 0.001ms)
+        if let Ok(cache) = self.cache.read() {
+            if let Some(entry) = cache.get(file_path) {
+                if entry.file_size == file_size && entry.modified_time == mtime {
+                    if let Ok(mut stats) = self.stats.write() {
+                        stats.0 += 1;
+                    }
+                    return Ok(entry.analysis.clone());
+                }
+            }
+        }
+
+        // 2. Read content and compute SHA-256
+        let content = fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read file '{}': {}", file_path.display(), e))?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let content_hash = format!("{:x}", hasher.finalize());
+
+        // 3. Deep Tier: Hash check against cache
+        let mut hit_by_hash = false;
+        let mut cached_analysis = None;
+        if let Ok(cache) = self.cache.read() {
+            if let Some(entry) = cache.get(file_path) {
+                if entry.content_hash == content_hash {
+                    hit_by_hash = true;
+                    cached_analysis = Some(entry.analysis.clone());
+                }
+            }
+        }
+
+        if hit_by_hash {
+            if let Ok(mut stats) = self.stats.write() {
+                stats.0 += 1;
+            }
+            if let Ok(mut wcache) = self.cache.write() {
+                if let Some(wentry) = wcache.get_mut(file_path) {
+                    wentry.modified_time = mtime;
+                    wentry.file_size = file_size;
+                }
+            }
+            if let Some(a) = cached_analysis {
+                return Ok(a);
+            }
+        }
+
+        // Cache miss: record miss
+        if let Ok(mut stats) = self.stats.write() {
+            stats.1 += 1;
+        }
+
         let ast_lang = AstLanguage::from_path(file_path);
-        match ast_lang {
+        let analysis = match ast_lang {
             Some(lang) => {
                 let mut parser = tree_sitter::Parser::new();
                 let ts_lang = lang.language();
@@ -224,22 +348,39 @@ impl SymbolEngine {
                     }
                 }
 
-                Ok(AstFileAnalysis {
-                    file_path: rel_path,
+                AstFileAnalysis {
+                    file_path: rel_path.clone(),
                     language: lang.name().to_string(),
                     symbols,
                     callsites,
                     imports,
-                })
+                }
             }
-            None => Ok(AstFileAnalysis {
-                file_path: rel_path,
+            None => AstFileAnalysis {
+                file_path: rel_path.clone(),
                 language: "Unsupported".to_string(),
                 symbols: Vec::new(),
                 callsites: Vec::new(),
                 imports: Vec::new(),
-            }),
+            },
+        };
+
+        // Cache write
+        if let Ok(mut cache) = self.cache.write() {
+            cache.insert(
+                file_path.to_path_buf(),
+                CachedAstEntry {
+                    file_path: file_path.to_path_buf(),
+                    rel_path,
+                    content_hash,
+                    file_size,
+                    modified_time: mtime,
+                    analysis: analysis.clone(),
+                },
+            );
         }
+
+        Ok(analysis)
     }
 
     /// Generates a comprehensive, high-density AST repository map of the workspace
@@ -444,6 +585,217 @@ impl SymbolEngine {
         }
 
         Ok(modified)
+    }
+
+    /// Explicitly removes a file from the AST cache
+    pub fn invalidate_file(&self, file_path: &Path) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.remove(file_path);
+        }
+    }
+
+    /// Pre-warms the AST index across all source files in the workspace.
+    /// Returns (indexed_files, total_symbols, elapsed_ms).
+    pub fn warm_cache(&self, path_filter: Option<&str>) -> (usize, usize, u128) {
+        let start = std::time::Instant::now();
+        let files = self.collect_source_files(path_filter);
+        let mut total_files = 0;
+        let mut total_symbols = 0;
+
+        for file in &files {
+            if let Ok(analysis) = self.analyze_file(file) {
+                total_files += 1;
+                total_symbols += analysis.symbols.len();
+            }
+        }
+
+        (total_files, total_symbols, start.elapsed().as_millis())
+    }
+
+    /// Computes a deterministic workspace Merkle root (SHA-256) across all source files
+    /// using bottom-up directory aggregation matching Git tree-hashing semantics.
+    pub fn compute_merkle_root(&self) -> String {
+        let files = self.collect_source_files(None);
+        if files.is_empty() {
+            let mut hasher = Sha256::new();
+            hasher.update(b"empty_workspace_tree");
+            return format!("{:x}", hasher.finalize());
+        }
+
+        let mut root_node = DirNode::default();
+
+        for file in &files {
+            let rel = file
+                .strip_prefix(&self.workspace_root)
+                .unwrap_or(file)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            let hash = if let Ok(cache) = self.cache.read() {
+                cache.get(file).map(|e| e.content_hash.clone())
+            } else {
+                None
+            };
+
+            let content_hash = match hash {
+                Some(h) => h,
+                None => {
+                    if let Ok(bytes) = fs::read(file) {
+                        let mut hasher = Sha256::new();
+                        hasher.update(&bytes);
+                        format!("{:x}", hasher.finalize())
+                    } else {
+                        continue;
+                    }
+                }
+            };
+
+            let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+            root_node.insert(&parts, content_hash);
+        }
+
+        root_node.compute_hash()
+    }
+
+    /// Retrieves hit/miss statistics and Merkle root for the index
+    pub fn get_cache_stats(&self) -> IndexCacheStats {
+        let (hits, misses) = self.stats.read().map(|s| *s).unwrap_or((0, 0));
+        let (cached_files, total_symbols) = if let Ok(cache) = self.cache.read() {
+            let files = cache.len();
+            let syms: usize = cache.values().map(|c| c.analysis.symbols.len()).sum();
+            (files, syms)
+        } else {
+            (0, 0)
+        };
+        let merkle_root = self.compute_merkle_root();
+
+        IndexCacheStats {
+            hits,
+            misses,
+            cached_files,
+            total_symbols,
+            merkle_root,
+        }
+    }
+
+    /// Returns all indexed symbol names across the workspace for autocomplete (#mentions)
+    pub fn get_all_symbol_names(&self) -> Vec<String> {
+        let is_empty = if let Ok(cache) = self.cache.read() {
+            cache.is_empty()
+        } else {
+            true
+        };
+        if is_empty {
+            let _ = self.warm_cache(None);
+        }
+
+        if let Ok(cache) = self.cache.read() {
+            let mut names = HashSet::new();
+            for entry in cache.values() {
+                for sym in &entry.analysis.symbols {
+                    names.insert(sym.name.clone());
+                }
+            }
+            let mut list: Vec<String> = names.into_iter().collect();
+            list.sort();
+            list
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Resolves ambient symbol candidates from natural language queries
+    /// to provide Turn-0 zero-token-waste context for LLMs.
+    pub fn resolve_ambient_symbols(&self, query: &str, limit: usize) -> Vec<SymbolRecord> {
+        let candidates = Self::extract_candidate_identifiers(query);
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches = Vec::new();
+
+        // 1. Search cached definitions first (sub-millisecond)
+        let cache_has_entries = if let Ok(cache) = self.cache.read() {
+            let has_entries = !cache.is_empty();
+            for entry in cache.values() {
+                for sym in &entry.analysis.symbols {
+                    for candidate in &candidates {
+                        if sym.name.eq_ignore_ascii_case(candidate) {
+                            let exact = sym.name == *candidate;
+                            matches.push((exact, sym.clone()));
+                        }
+                    }
+                }
+            }
+            has_entries
+        } else {
+            false
+        };
+
+        // 2. If cache was empty or found no matches, walk filesystem
+        if !cache_has_entries || matches.is_empty() {
+            for candidate in &candidates {
+                let defs = self.find_symbol_definitions(candidate);
+                for def in defs {
+                    let exact = def.name == *candidate;
+                    matches.push((exact, def));
+                }
+            }
+        }
+
+        // Sort: exact matches first, then public symbols first, then path & line
+        matches.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(b.1.is_public.cmp(&a.1.is_public))
+                .then(a.1.file_path.cmp(&b.1.file_path))
+                .then(a.1.line_number.cmp(&b.1.line_number))
+        });
+
+        let mut seen = HashSet::new();
+        let mut deduped = Vec::new();
+        for (_, sym) in matches {
+            let key = (sym.file_path.clone(), sym.line_number);
+            if seen.insert(key) {
+                deduped.push(sym);
+                if deduped.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        deduped
+    }
+
+    /// Extracts potential code identifier tokens from a natural language string.
+    pub fn extract_candidate_identifiers(query: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let re = match regex::Regex::new(r"\b[a-zA-Z_][a-zA-Z0-9_]{2,}\b") {
+            Ok(r) => r,
+            Err(_) => return tokens,
+        };
+
+        let stop_words: HashSet<&str> = [
+            "the", "and", "for", "with", "from", "that", "this", "file", "function",
+            "code", "test", "tests", "make", "help", "view", "read", "write", "patch",
+            "find", "look", "search", "show", "give", "need", "want", "some", "more",
+            "into", "over", "under", "when", "what", "which", "where", "how", "why",
+            "then", "also", "have", "been", "will", "would", "could", "should", "true",
+            "false", "none", "null", "self", "item", "data", "list", "type", "name",
+            "path", "error", "line", "mode", "call", "used", "does", "done", "work",
+            "best", "like", "just", "them", "both", "each", "other", "there",
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        for cap in re.find_iter(query) {
+            let word = cap.as_str();
+            let lower = word.to_ascii_lowercase();
+            if !stop_words.contains(lower.as_str()) && !tokens.contains(&word.to_string()) {
+                tokens.push(word.to_string());
+            }
+        }
+        tokens
     }
 
     fn collect_identifier_ranges(
@@ -1394,5 +1746,117 @@ fn calculate_score(score: i32) -> i32 {
         // String literal and comment must remain untouched by AST renaming!
         assert!(updated.contains("\"calculate_score should not change here\""));
         assert!(updated.contains("// comment about calculate_score"));
+    }
+
+    #[test]
+    fn test_cached_ast_entry_hit_and_invalidation() {
+        let temp = tempfile::tempdir().unwrap();
+        let file_path = temp.path().join("service.rs");
+        let code_v1 = r#"
+pub struct ServiceContext {
+    pub id: String,
+}
+
+pub fn handle_request() -> bool {
+    true
+}
+"#;
+        fs::write(&file_path, code_v1).unwrap();
+
+        let engine = SymbolEngine::new(temp.path());
+
+        // 1. Initial parse -> Cache miss
+        let analysis1 = engine.analyze_file(&file_path).unwrap();
+        assert_eq!(analysis1.symbols.len(), 2);
+        let stats1 = engine.get_cache_stats();
+        assert_eq!(stats1.misses, 1);
+        assert_eq!(stats1.hits, 0);
+        assert_eq!(stats1.cached_files, 1);
+
+        // 2. Second parse -> Immediate sub-millisecond cache hit
+        let analysis2 = engine.analyze_file(&file_path).unwrap();
+        assert_eq!(analysis2.symbols.len(), 2);
+        let stats2 = engine.get_cache_stats();
+        assert_eq!(stats2.hits, 1);
+        assert_eq!(stats2.misses, 1);
+
+        // 3. Modify file content -> Cache invalidates and re-parses
+        let code_v2 = r#"
+pub struct ServiceContext {
+    pub id: String,
+}
+
+pub fn handle_request() -> bool {
+    true
+}
+
+pub fn terminate_session() {}
+"#;
+        fs::write(&file_path, code_v2).unwrap();
+
+        let analysis3 = engine.analyze_file(&file_path).unwrap();
+        assert_eq!(analysis3.symbols.len(), 3);
+        assert!(analysis3.symbols.iter().any(|s| s.name == "terminate_session"));
+        let stats3 = engine.get_cache_stats();
+        assert_eq!(stats3.misses, 2);
+        assert_eq!(stats3.hits, 1);
+    }
+
+    #[test]
+    fn test_merkle_tree_computation() {
+        let temp = tempfile::tempdir().unwrap();
+        let src_dir = temp.path().join("src");
+        let tools_dir = src_dir.join("tools");
+        fs::create_dir_all(&tools_dir).unwrap();
+
+        let file_a = src_dir.join("main.rs");
+        let file_b = tools_dir.join("engine.rs");
+        fs::write(&file_a, "fn main() {}\n").unwrap();
+        fs::write(&file_b, "pub struct Engine;\n").unwrap();
+
+        let engine = SymbolEngine::new(temp.path());
+        let root_1 = engine.compute_merkle_root();
+        assert!(!root_1.is_empty());
+
+        // Identical state yields identical Merkle root
+        let root_1_repeat = engine.compute_merkle_root();
+        assert_eq!(root_1, root_1_repeat);
+
+        // Modify one file -> Merkle root changes deterministically
+        fs::write(&file_b, "pub struct Engine;\npub fn run() {}\n").unwrap();
+        let root_2 = engine.compute_merkle_root();
+        assert_ne!(root_1, root_2);
+
+        // Revert modification -> Merkle root reverts back
+        fs::write(&file_b, "pub struct Engine;\n").unwrap();
+        let root_reverted = engine.compute_merkle_root();
+        assert_eq!(root_1, root_reverted);
+    }
+
+    #[test]
+    fn test_ambient_symbol_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let file_path = temp.path().join("pipeline.rs");
+        let code = r#"
+pub struct DataPipeline;
+
+impl DataPipeline {
+    pub fn execute_batch_flow() {}
+}
+
+pub fn transform_stream() {}
+"#;
+        fs::write(&file_path, code).unwrap();
+
+        let engine = SymbolEngine::new(temp.path());
+        engine.warm_cache(None);
+
+        let query = "Can you help optimize execute_batch_flow and transform_stream in the codebase?";
+        let resolved = engine.resolve_ambient_symbols(query, 5);
+
+        assert!(!resolved.is_empty());
+        let names: Vec<&str> = resolved.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"execute_batch_flow"));
+        assert!(names.contains(&"transform_stream"));
     }
 }

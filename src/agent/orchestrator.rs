@@ -280,9 +280,34 @@ impl DaedalusOrchestrator {
             });
         }
 
+        let ambient = self.tools.symbols.resolve_ambient_symbols(user_goal, 5);
+        let user_content = if !ambient.is_empty() {
+            let mut buf = format!(
+                "{}\n\n[AMBIENT CODEBASE INTELLIGENCE: {} RELEVANT SYMBOL(S) RESOLVED]\n",
+                user_goal,
+                ambient.len()
+            );
+            for sym in ambient {
+                let pub_flag = if sym.is_public { "pub " } else { "" };
+                let cont = if let Some(ref c) = sym.container {
+                    format!(" [in {}]", c)
+                } else {
+                    String::new()
+                };
+                buf.push_str(&format!(
+                    "- `{}` ({}) at {}:L{}\n  Signature: {}{}{}\n",
+                    sym.name, sym.kind, sym.file_path, sym.line_number, pub_flag, sym.signature, cont
+                ));
+            }
+            buf.push_str("Note: Target these verified locations directly to avoid redundant exploratory searches.\n");
+            buf
+        } else {
+            user_goal.to_string()
+        };
+
         self.history.push(LLMMessage {
             role: "user".to_string(),
-            content: user_goal.to_string(),
+            content: user_content,
             tool_calls: None,
             tool_call_id: None,
             name: None,

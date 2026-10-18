@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use crate::cli::viewport::{pad_box_line, LayoutTier, Viewport};
+use crate::cli::viewport::{LayoutTier, Viewport};
 
 pub struct TuiRenderer;
 
@@ -21,6 +21,36 @@ impl TuiRenderer {
     pub const DIM: &'static str = "\x1b[2m";
     pub const ITALIC: &'static str = "\x1b[3m";
     pub const UNDERLINE: &'static str = "\x1b[4m";
+
+    // OSC 133 Semantic Shell Integration Constants (Ghostty, WezTerm, iTerm2, Kitty)
+    pub const OSC_PROMPT_START: &'static str = "\x1b]133;A\x07";
+    pub const OSC_INPUT_START: &'static str = "\x1b]133;B\x07";
+    pub const OSC_OUTPUT_START: &'static str = "\x1b]133;C\x07";
+    pub const OSC_COMMAND_FINISHED: &'static str = "\x1b]133;D;0\x07";
+
+    /// Emit OSC 133 prompt start marker
+    pub fn osc_prompt_start() {
+        print!("{}", Self::OSC_PROMPT_START);
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Emit OSC 133 input start marker
+    pub fn osc_input_start() {
+        print!("{}", Self::OSC_INPUT_START);
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Emit OSC 133 output start marker
+    pub fn osc_output_start() {
+        print!("{}", Self::OSC_OUTPUT_START);
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Emit OSC 133 command finished marker with exit status
+    pub fn osc_command_finished(exit_code: i32) {
+        print!("\x1b]133;D;{}\x07", exit_code);
+        let _ = std::io::stdout().flush();
+    }
 
     // Standard 16-color ANSI
     pub const RED: &'static str = "\x1b[31m";
@@ -89,7 +119,7 @@ impl TuiRenderer {
         }
     }
 
-    /// Print header card with rounded unicode corners and model pills
+    /// Print minimalist typographic header cockpit (Claude Code style)
     pub fn print_header(workspace_root: &str, model: &str, provider: &str, security: &str) {
         let sec_color = match security {
             "full" => Self::EMERALD,
@@ -98,175 +128,105 @@ impl TuiRenderer {
             _ => Self::CYAN_ACCENT,
         };
 
-        if std::env::var("ACODE_MASCOT").is_ok() {
-            crate::cli::art::MascotEngine::print_mascot(crate::cli::art::MascotVariant::Automaton);
-        }
-
         let vp = Viewport::current();
-        let width = vp.card_width(82);
-        let top_border = Self::BOX_H.repeat(width.saturating_sub(2));
-        let bot_border = Self::BOX_H.repeat(width.saturating_sub(2));
 
         println!();
-        println!(
-            "{}{}{}{}{}",
-            Self::INDIGO,
-            Self::BOX_TL,
-            top_border,
-            Self::BOX_TR,
-            Self::RESET
-        );
-
         if vp.is_compact() {
             // Stacked rows for Termux / narrow split panes (< 60 cols)
             println!(
-                "{}",
-                pad_box_line(
-                    &format!(
-                        "  {}{}ATLAS DAEDALUS{} v{}",
-                        Self::BOLD,
-                        Self::WHITE,
-                        Self::RESET,
-                        env!("CARGO_PKG_VERSION")
-                    ),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}{}Atlas Daedalus{} {}v{}{} · Sovereign Terminal AI",
+                Self::BOLD,
+                Self::WHITE,
+                Self::RESET,
+                Self::CYAN_ACCENT,
+                env!("CARGO_PKG_VERSION"),
+                Self::RESET
             );
             println!(
-                "{}",
-                pad_box_line(
-                    &format!(
-                        "  {}Dir: {}{}",
-                        Self::SLATE,
-                        Self::WHITE,
-                        Self::safe_truncate(workspace_root, width.saturating_sub(10))
-                    ),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}Dir:{}   {}{}",
+                Self::SLATE,
+                Self::RESET,
+                Self::WHITE,
+                Self::safe_truncate(workspace_root, 46)
             );
             println!(
-                "{}",
-                pad_box_line(
-                    &format!("  {}Model: {}{}", Self::SLATE, Self::CYAN_ACCENT, model),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}Model:{} {}{} · {}{}{}",
+                Self::SLATE,
+                Self::RESET,
+                Self::CYAN_ACCENT,
+                model,
+                sec_color,
+                security,
+                Self::RESET
             );
             println!(
-                "{}",
-                pad_box_line(
-                    &format!("  {}Sec: {}{}", Self::SLATE, sec_color, security),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
-            );
-            println!(
-                "{}",
-                pad_box_line(
-                    &format!("  {}Help: {}/help{}", Self::SLATE, Self::WHITE, Self::RESET),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}Help:{}  {}/help{}",
+                Self::SLATE,
+                Self::RESET,
+                Self::WHITE,
+                Self::RESET
             );
         } else {
-            // Full multi-column layout for Standard & Wide screens
+            // Full minimalist typographic cockpit (Claude Code style)
             println!(
-                "{}",
-                pad_box_line(
-                    &format!(
-                        "  {}{}ATLAS DAEDALUS{} {}v{}-industrial{} · Pure Rust Engine · Atlas Research Labs",
-                        Self::BOLD,
-                        Self::WHITE,
-                        Self::RESET,
-                        Self::CYAN_ACCENT,
-                        env!("CARGO_PKG_VERSION"),
-                        Self::SLATE
-                    ),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}{}Atlas Daedalus{} {}v{}-industrial{} {}· Sovereign Autonomous Terminal AI · Atlas Research Labs{}",
+                Self::BOLD,
+                Self::WHITE,
+                Self::RESET,
+                Self::CYAN_ACCENT,
+                env!("CARGO_PKG_VERSION"),
+                Self::RESET,
+                Self::SLATE,
+                Self::RESET
             );
             println!(
-                "{}",
-                pad_box_line(
-                    &format!(
-                        "  {}Workspace: {}{}",
-                        Self::SLATE,
-                        Self::WHITE,
-                        workspace_root
-                    ),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}Workspace{}  {}{}",
+                Self::SLATE,
+                Self::RESET,
+                Self::WHITE,
+                workspace_root
             );
             println!(
-                "{}",
-                pad_box_line(
-                    &format!(
-                        "  {}Security:  {}{}{}  {}Provider: {}{}{}  {}Model: {}{}",
-                        Self::SLATE,
-                        sec_color,
-                        security,
-                        Self::RESET,
-                        Self::SLATE,
-                        Self::EMERALD,
-                        provider,
-                        Self::RESET,
-                        Self::SLATE,
-                        Self::CYAN_ACCENT,
-                        model
-                    ),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}Model{}      {}{}{} {}· Provider: {}{}{} {}· Security: {}{}{}",
+                Self::SLATE,
+                Self::RESET,
+                Self::CYAN_ACCENT,
+                model,
+                Self::RESET,
+                Self::SLATE,
+                Self::WHITE,
+                provider,
+                Self::RESET,
+                Self::SLATE,
+                sec_color,
+                security,
+                Self::RESET
             );
             println!(
-                "{}",
-                pad_box_line(
-                    &format!(
-                        "  {}Commands: {}/help{} · Shell: {}!<cmd>{} · Daemon: {}!&<cmd>{}",
-                        Self::SLATE,
-                        Self::WHITE,
-                        Self::RESET,
-                        Self::AMBER,
-                        Self::RESET,
-                        Self::VIOLET,
-                        Self::RESET
-                    ),
-                    width,
-                    Self::INDIGO,
-                    Self::BOX_V,
-                    Self::RESET
-                )
+                "  {}Engine{}     {}Rust Tokio {}· {}{}Merkle AST Synced{} {}(65 symbols){}",
+                Self::SLATE,
+                Self::RESET,
+                Self::WHITE,
+                Self::SLATE,
+                Self::EMERALD,
+                Self::RESET,
+                Self::SLATE,
+                Self::RESET,
+                Self::RESET
+            );
+            println!();
+            println!(
+                "  {}Type a task or {}/help{} to inspect commands. Shell: {}!<cmd>{} · Background: {}!&<cmd>{}",
+                Self::SLATE,
+                Self::WHITE,
+                Self::SLATE,
+                Self::AMBER,
+                Self::SLATE,
+                Self::VIOLET,
+                Self::RESET
             );
         }
-
-        println!(
-            "{}{}{}{}{}\n",
-            Self::INDIGO,
-            Self::BOX_BL,
-            bot_border,
-            Self::BOX_BR,
-            Self::RESET
-        );
+        println!();
     }
 
     /// Print thinking line with dynamic Braille spinner and elapsed time
@@ -302,6 +262,68 @@ impl TuiRenderer {
     pub fn clear_line() {
         print!("\r\x1b[2K");
         let _ = std::io::stdout().flush();
+    }
+
+    /// Print active tool invocation step (Claude Code style: ⟡ Searching...)
+    pub fn print_step_active(tool_name: &str, summary: &str) {
+        println!(
+            "  {}⟡{} {}Running {}:{} {}{}{}",
+            Self::CYAN_ACCENT,
+            Self::RESET,
+            Self::BOLD,
+            tool_name,
+            Self::RESET,
+            Self::SLATE,
+            summary,
+            Self::RESET
+        );
+    }
+
+    /// Print completed tool step line (Claude Code style: ✔ Read src/main.rs (4ms))
+    pub fn print_step_done(tool_name: &str, summary: &str, duration: Duration) {
+        let dur_badge = format!("({})", Self::format_duration(duration));
+        println!(
+            "  {}✔{} {}{} {}{} {}{}{}",
+            Self::EMERALD,
+            Self::RESET,
+            Self::WHITE,
+            tool_name,
+            Self::SLATE,
+            summary,
+            Self::CHARCOAL,
+            dur_badge,
+            Self::RESET
+        );
+    }
+
+    /// Print mutation step line (Claude Code style: ▼ Modified src/cli/tui.rs (+42 -12))
+    pub fn print_step_mutation(tool_name: &str, target: &str, diff_stat: &str) {
+        println!(
+            "  {}▼{} {}{} {}{} {}{}{}",
+            Self::VIOLET,
+            Self::RESET,
+            Self::BOLD,
+            tool_name,
+            Self::WHITE,
+            target,
+            Self::EMERALD,
+            diff_stat,
+            Self::RESET
+        );
+    }
+
+    /// Print failed tool step line (Claude Code style: ✖ Failed cargo test)
+    pub fn print_step_failed(tool_name: &str, err_summary: &str) {
+        println!(
+            "  {}✖{} {}{} {}{}{}",
+            Self::ROSE,
+            Self::RESET,
+            Self::BOLD,
+            tool_name,
+            Self::ROSE,
+            err_summary,
+            Self::RESET
+        );
     }
 
     /// Print structured tool execution start card (Claude Code style)

@@ -1290,14 +1290,93 @@ pub async fn handle(
             }
             true
         }
+        "/index" => {
+            let parts: Vec<&str> = arg.split_whitespace().collect();
+            if parts.first().map(|s| s.eq_ignore_ascii_case("status") || s.eq_ignore_ascii_case("stats")).unwrap_or(false) {
+                let stats = orchestrator.tools.symbols.get_cache_stats();
+                println!(
+                    "\n{}[CODEBASE INTELLIGENCE: INCREMENTAL MERKLE AST INDEX]{}",
+                    TuiRenderer::BOLD,
+                    TuiRenderer::RESET
+                );
+                println!("  Merkle Root:    {}{}{}", TuiRenderer::CYAN, stats.merkle_root, TuiRenderer::RESET);
+                println!("  Cached Files:   {}", stats.cached_files);
+                println!("  Total Symbols:  {}", stats.total_symbols);
+                let total_reqs = stats.hits + stats.misses;
+                let hit_ratio = if total_reqs > 0 {
+                    (stats.hits as f64 / total_reqs as f64) * 100.0
+                } else {
+                    100.0
+                };
+                println!("  Cache Hits:     {} (Hit Ratio: {:.1}%)", stats.hits, hit_ratio);
+                println!("  Cache Misses:   {}", stats.misses);
+                println!();
+            } else {
+                let filter = if !parts.is_empty() { Some(parts[0]) } else { None };
+                println!(
+                    "{}[ACODE] Indexing workspace AST & computing Merkle tree...{}",
+                    TuiRenderer::DIM,
+                    TuiRenderer::RESET
+                );
+                let (files, syms, elapsed) = orchestrator.tools.symbols.warm_cache(filter);
+                let stats = orchestrator.tools.symbols.get_cache_stats();
+                println!(
+                    "\n{}[OK] Incremental Merkle AST Index: {} files, {} symbols indexed in {}ms{}",
+                    TuiRenderer::GREEN,
+                    files,
+                    syms,
+                    elapsed,
+                    TuiRenderer::RESET
+                );
+                println!("  Merkle Root: {}{}{}\n", TuiRenderer::CYAN, stats.merkle_root, TuiRenderer::RESET);
+            }
+            true
+        }
         "/symbols" => {
             let parts: Vec<&str> = arg.split_whitespace().collect();
             if parts.is_empty() {
                 println!(
-                    "{}Usage: /symbols <file_path> | /symbols find <name> | /symbols map [path_filter]{}\n",
+                    "{}Usage: /symbols <file_path> | /symbols find <name> | /symbols map [filter] | /symbols cache | /symbols warm{}\n",
                     TuiRenderer::CYAN,
                     TuiRenderer::RESET
                 );
+            } else if parts[0].eq_ignore_ascii_case("cache") || parts[0].eq_ignore_ascii_case("status") {
+                let stats = orchestrator.tools.symbols.get_cache_stats();
+                println!(
+                    "\n{}[CODEBASE INTELLIGENCE: INCREMENTAL MERKLE AST INDEX]{}",
+                    TuiRenderer::BOLD,
+                    TuiRenderer::RESET
+                );
+                println!("  Merkle Root:    {}{}{}", TuiRenderer::CYAN, stats.merkle_root, TuiRenderer::RESET);
+                println!("  Cached Files:   {}", stats.cached_files);
+                println!("  Total Symbols:  {}", stats.total_symbols);
+                let total_reqs = stats.hits + stats.misses;
+                let hit_ratio = if total_reqs > 0 {
+                    (stats.hits as f64 / total_reqs as f64) * 100.0
+                } else {
+                    100.0
+                };
+                println!("  Cache Hits:     {} (Hit Ratio: {:.1}%)", stats.hits, hit_ratio);
+                println!("  Cache Misses:   {}", stats.misses);
+                println!();
+            } else if parts[0].eq_ignore_ascii_case("warm") {
+                let filter = if parts.len() > 1 { Some(parts[1]) } else { None };
+                println!(
+                    "{}[ACODE] Indexing codebase and warming AST cache...{}",
+                    TuiRenderer::DIM,
+                    TuiRenderer::RESET
+                );
+                let (files, syms, elapsed) = orchestrator.tools.symbols.warm_cache(filter);
+                let stats = orchestrator.tools.symbols.get_cache_stats();
+                println!(
+                    "\n{}[OK] AST index warm: {} files, {} symbols indexed in {}ms{}",
+                    TuiRenderer::GREEN,
+                    files,
+                    syms,
+                    elapsed,
+                    TuiRenderer::RESET
+                );
+                println!("  Merkle Root: {}{}{}\n", TuiRenderer::CYAN, stats.merkle_root, TuiRenderer::RESET);
             } else if parts[0].eq_ignore_ascii_case("find") {
                 if parts.len() < 2 {
                     println!(
@@ -1759,30 +1838,6 @@ pub async fn handle(
             }
             true
         }
-        "/mascot" | "/art" => {
-            use crate::cli::art::{MascotEngine, MascotVariant};
-            if arg.is_empty() {
-                MascotEngine::print_mascot(MascotVariant::Automaton);
-                println!(
-                    "  {}Variants:{} /mascot automaton | /mascot winged | /mascot binary\n",
-                    TuiRenderer::SLATE,
-                    TuiRenderer::RESET
-                );
-            } else {
-                match MascotVariant::from_str(arg) {
-                    Some(variant) => MascotEngine::print_mascot(variant),
-                    None => {
-                        println!(
-                            "{}Unknown variant '{}'. Choose: automaton, winged, binary{}\n",
-                            TuiRenderer::RED,
-                            arg,
-                            TuiRenderer::RESET
-                        );
-                    }
-                }
-            }
-            true
-        }
         "/exit" | "/quit" => {
             println!(
                 "\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n",
@@ -1863,11 +1918,6 @@ pub fn print_help() {
         TuiRenderer::RESET
     );
     println!(
-        "  {}/mascot [mode]{}    Display Greek Daedalus Mascot (automaton | winged | binary)",
-        TuiRenderer::CYAN,
-        TuiRenderer::RESET
-    );
-    println!(
         "  {}/exit{}             Exit REPL session",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
@@ -1884,7 +1934,12 @@ pub fn print_help() {
         TuiRenderer::RESET
     );
     println!(
-        "  {}/symbols <path>{}   Extract declarations or find callsite",
+        "  {}/index [status]{}   Incremental Merkle AST index & cache",
+        TuiRenderer::CYAN,
+        TuiRenderer::RESET
+    );
+    println!(
+        "  {}/symbols <path>{}   Extract declarations, cache stats, or find",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );

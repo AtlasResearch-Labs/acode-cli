@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cli::tui::TuiRenderer;
@@ -585,32 +585,86 @@ impl PermissionGate {
         print!("\nChoice {}: ", prompt_options);
         let _ = io::stdout().flush();
 
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(0) => {
-                // Closed stdin / EOF: must ALWAYS deny to prevent automated execution or headless pipe bypass
-                println!("{}\n[SECURITY GATE] Non-interactive EOF / closed stdin detected. Automatically denying operation.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
-                println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
-                return false;
-            }
-            Err(_) => {
-                println!(
-                    "{}\n[FAIL] Failed to read user choice. Denying operation.{}\n",
-                    TuiRenderer::RED,
-                    TuiRenderer::RESET
-                );
-                println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
-                return false;
-            }
-            Ok(_) => {}
-        }
+        let choice = if io::stdin().is_terminal() {
+            // Interactive terminal: read single keypress immediately
+            let raw_choice = match crossterm::terminal::enable_raw_mode() {
+                Ok(_) => {
+                    let mut res = None;
+                    while let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
+                        if key.kind != crossterm::event::KeyEventKind::Press {
+                            continue;
+                        }
+                        match key.code {
+                            crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') => {
+                                res = Some("y".to_string());
+                                break;
+                            }
+                            crossterm::event::KeyCode::Char('s')
+                            | crossterm::event::KeyCode::Char('S')
+                            | crossterm::event::KeyCode::Char('a')
+                            | crossterm::event::KeyCode::Char('A') => {
+                                res = Some("s".to_string());
+                                break;
+                            }
+                            crossterm::event::KeyCode::Char('t') | crossterm::event::KeyCode::Char('T') => {
+                                res = Some("t".to_string());
+                                break;
+                            }
+                            crossterm::event::KeyCode::Char('d')
+                            | crossterm::event::KeyCode::Char('D')
+                            | crossterm::event::KeyCode::Char('n')
+                            | crossterm::event::KeyCode::Char('N') => {
+                                res = Some("d".to_string());
+                                break;
+                            }
+                            crossterm::event::KeyCode::Enter => {
+                                res = Some(default_choice.to_string());
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    res
+                }
+                Err(_) => None,
+            };
 
-        let choice = input.trim().to_lowercase();
-        let effective_choice = if choice.is_empty() {
-            default_choice
+            if let Some(ch) = raw_choice {
+                println!("{}", ch);
+                ch
+            } else {
+                default_choice.to_string()
+            }
         } else {
-            choice.as_str()
+            let mut input = String::new();
+            match io::stdin().read_line(&mut input) {
+                Ok(0) => {
+                    // Closed stdin / EOF: must ALWAYS deny to prevent automated execution or headless pipe bypass
+                    println!("{}\n[SECURITY GATE] Non-interactive EOF / closed stdin detected. Automatically denying operation.{}\n", TuiRenderer::RED, TuiRenderer::RESET);
+                    println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
+                    return false;
+                }
+                Err(_) => {
+                    println!(
+                        "{}\n[FAIL] Failed to read user choice. Denying operation.{}\n",
+                        TuiRenderer::RED,
+                        TuiRenderer::RESET
+                    );
+                    println!("{}{}{}\n", TuiRenderer::YELLOW, border, TuiRenderer::RESET);
+                    return false;
+                }
+                Ok(_) => {}
+            }
+            let c = input.trim().to_lowercase();
+            if c.is_empty() {
+                default_choice.to_string()
+            } else {
+                c
+            }
         };
+
+        let effective_choice = choice.as_str();
 
         let allowed = match effective_choice {
             "y" | "yes" => {

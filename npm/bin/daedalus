@@ -25,7 +25,11 @@ fi
 
 if [ -n "$TARGET" ] && [ -f "$TARGET" ]; then
   chmod +x "$TARGET" 2>/dev/null || true
-  exec "$TARGET" "$@"
+  "$TARGET" "$@"
+  STATUS=$?
+  if [ $STATUS -ne 126 ] && [ $STATUS -ne 127 ]; then
+    exit $STATUS
+  fi
 fi
 
 exec node "$BASEDIR/acode.js" "$@"

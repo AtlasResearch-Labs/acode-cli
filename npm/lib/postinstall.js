@@ -20,6 +20,23 @@ const { ensureBinary, getPlatformKey } = require('./installer');
       fs.mkdirSync(binDir, { recursive: true });
     }
 
+    // Auto-patch Android / Linux ARM64 ELF binaries to ET_DYN (PIE e_type=3) for Android Bionic linker
+    for (const elfName of ['acode-android-arm64', 'acode-linux-arm64']) {
+      const elfPath = path.join(binDir, elfName);
+      if (fs.existsSync(elfPath)) {
+        try {
+          const fd = fs.openSync(elfPath, 'r+');
+          const buf = Buffer.alloc(2);
+          fs.readSync(fd, buf, 0, 2, 16);
+          if (buf[0] === 2 && buf[1] === 0) {
+            buf[0] = 3;
+            fs.writeSync(fd, buf, 0, 2, 16);
+          }
+          fs.closeSync(fd);
+        } catch (_) {}
+      }
+    }
+
     // Resolve native engine binary
     const binaryPath = await ensureBinary('acode');
 

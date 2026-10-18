@@ -84,7 +84,12 @@ impl DaedalusREPL {
         let indigo = TuiRenderer::INDIGO;
         let box_bl = TuiRenderer::BOX_BL;
         let reset = TuiRenderer::RESET;
-        format!("{indigo}{box_bl}❯{reset} ")
+        let arrow = if cfg!(windows) && std::env::var("WT_SESSION").is_err() {
+            ">"
+        } else {
+            "❯"
+        };
+        format!("{indigo}{box_bl}{arrow}{reset} ")
     }
 
     fn load_history() -> Vec<String> {

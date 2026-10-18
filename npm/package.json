@@ -1,6 +1,6 @@
 {
   "name": "acode-cli",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Atlas Daedalus — Industrial Autonomous Terminal AI Coder (Pure Rust Engine)",
   "main": "index.js",
   "bin": {
@@ -13,16 +13,7 @@
     "README.md"
   ],
   "scripts": {
-    "postinstall": "node lib/postinstall.js",
     "test": "node bin/acode.js --version"
-  },
-  "optionalDependencies": {
-    "@atlasresearch/acode-linux-x64": "1.7.0",
-    "@atlasresearch/acode-linux-arm64": "1.7.0",
-    "@atlasresearch/acode-darwin-x64": "1.7.0",
-    "@atlasresearch/acode-darwin-arm64": "1.7.0",
-    "@atlasresearch/acode-win32-x64": "1.7.0",
-    "@atlasresearch/acode-android-arm64": "1.7.0"
   },
   "keywords": [
     "ai-agent",

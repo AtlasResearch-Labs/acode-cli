@@ -1,8 +1,11 @@
 @echo off
 rem Atlas Daedalus Native Direct Launcher (Pure Rust Engine)
-set "TARGET_BIN=F:\projects\Atlas-Research-Labs\Atlas-Daedalus\npm\bin\acode.exe"
-if exist "%TARGET_BIN%" (
-  "%TARGET_BIN%" %*
+if exist "%~dp0acode-win-x64.exe" (
+  "%~dp0acode-win-x64.exe" %*
+  exit /b %ERRORLEVEL%
+)
+if exist "%~dp0acode.exe" (
+  "%~dp0acode.exe" %*
   exit /b %ERRORLEVEL%
 )
 node "%~dp0acode.js" %*

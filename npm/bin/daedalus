@@ -1,0 +1,31 @@
+#!/bin/sh
+# Atlas Daedalus Native Direct Launcher (Pure Rust Engine)
+# Instant native execution (~2ms startup, 8MB RSS)
+
+BASEDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ARCH=$(uname -m)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+TARGET=""
+if [ -n "$PREFIX" ] && [ -d "$PREFIX/include" ] || [ -f "/system/bin/sh" ]; then
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    TARGET="$BASEDIR/acode-android-arm64"
+  fi
+fi
+
+if [ -z "$TARGET" ] || [ ! -f "$TARGET" ]; then
+  if [ "$OS" = "linux" ]; then
+    if [ "$ARCH" = "x86_64" ]; then
+      TARGET="$BASEDIR/acode-linux-x64"
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+      TARGET="$BASEDIR/acode-android-arm64"
+    fi
+  fi
+fi
+
+if [ -n "$TARGET" ] && [ -f "$TARGET" ]; then
+  chmod +x "$TARGET" 2>/dev/null || true
+  exec "$TARGET" "$@"
+fi
+
+exec node "$BASEDIR/acode.js" "$@"

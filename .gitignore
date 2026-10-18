@@ -5,6 +5,8 @@ node_modules/
 npm/bin/native/
 npm/bin/acode-*
 npm/bin/acode.exe
+build-tools/
+.cargo/
 *.tgz
 *.zip
 **/*.rs.bk

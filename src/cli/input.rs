@@ -399,13 +399,23 @@ impl TerminalInputEngine {
 
     /// Insert a character at the current cursor position
     pub fn insert_char(&mut self, c: char) {
-        if self.cursor_pos >= self.buffer.len() {
+        let count = self.char_count();
+        if self.cursor_pos >= count {
             self.buffer.push(c);
-            self.cursor_pos = self.buffer.len();
+            self.cursor_pos = count + 1;
         } else {
             let byte_idx = self.char_to_byte_index(self.cursor_pos);
             self.buffer.insert(byte_idx, c);
             self.cursor_pos += 1;
+        }
+    }
+
+    /// Delete from current cursor position to end of buffer (Ctrl+K)
+    pub fn kill_to_end(&mut self) {
+        if self.cursor_pos < self.char_count() {
+            let byte_idx = self.char_to_byte_index(self.cursor_pos);
+            self.buffer.truncate(byte_idx);
+            self.ghost_text = None;
         }
     }
 
@@ -632,14 +642,24 @@ impl TerminalInputEngine {
                 }
             }
 
-            // Alt+Right accepts next ghost word
-            (KeyCode::Right, KeyModifiers::ALT) => {
-                if self.accept_ghost_word() {
+            // Word navigation forward (Alt+Right / Ctrl+Right / Alt+F)
+            (KeyCode::Right, KeyModifiers::ALT)
+            | (KeyCode::Right, KeyModifiers::CONTROL)
+            | (KeyCode::Char('f'), KeyModifiers::ALT) => {
+                if self.cursor_pos == self.char_count() && self.accept_ghost_word() {
                     Some(InputAction::AcceptGhost)
                 } else {
                     self.move_word_right();
                     Some(InputAction::Redraw)
                 }
+            }
+
+            // Word navigation backward (Alt+Left / Ctrl+Left / Alt+B)
+            (KeyCode::Left, KeyModifiers::ALT)
+            | (KeyCode::Left, KeyModifiers::CONTROL)
+            | (KeyCode::Char('b'), KeyModifiers::ALT) => {
+                self.move_word_left();
+                Some(InputAction::Redraw)
             }
 
             // Standard cursor navigation
@@ -659,10 +679,6 @@ impl TerminalInputEngine {
                 self.move_cursor_end();
                 Some(InputAction::Redraw)
             }
-            (KeyCode::Left, KeyModifiers::ALT) => {
-                self.move_word_left();
-                Some(InputAction::Redraw)
-            }
 
             // Editing operations
             (KeyCode::Backspace, _) => {
@@ -679,6 +695,15 @@ impl TerminalInputEngine {
             }
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                 self.clear_line();
+                Some(InputAction::Redraw)
+            }
+            (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
+                self.kill_to_end();
+                Some(InputAction::Redraw)
+            }
+            (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+                print!("\x1B[2J\x1B[1;1H");
+                let _ = stdout().flush();
                 Some(InputAction::Redraw)
             }
 

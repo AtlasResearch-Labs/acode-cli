@@ -176,10 +176,19 @@ impl DaedalusREPL {
             input_engine.history.push(trimmed.to_string());
             completion_engine.history.push(trimmed.to_string());
 
-            if trimmed.starts_with('/')
-                && SlashCommandHandler::handle(trimmed, &mut self.orchestrator).await
-            {
-                continue;
+            if trimmed.starts_with('/') {
+                if SlashCommandHandler::handle(trimmed, &mut self.orchestrator).await {
+                    continue;
+                } else {
+                    let cmd_name = trimmed.split_whitespace().next().unwrap_or(trimmed);
+                    println!(
+                        "\n{}[FAIL] Unknown command '{}'. Type /help for command reference.{}\n",
+                        TuiRenderer::RED,
+                        cmd_name,
+                        TuiRenderer::RESET
+                    );
+                    continue;
+                }
             }
 
                     // Direct non-blocking background daemon spawn with '!&' prefix

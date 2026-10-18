@@ -33,10 +33,11 @@ function resolveExistingBinary(base) {
 
   // 2. Local packaged platform binaries in npm/bin/
   if (isAndroid) {
-    // Android Bionic native targets (Termux)
+    // Android Bionic / Termux native targets
     candidates.push(
       path.join(__dirname, '..', 'bin', `${base}-android-${arch}`),
       path.join(__dirname, '..', 'bin', `${base}-android-arm64`),
+      path.join(__dirname, '..', 'bin', `${base}-linux-arm64`),
       path.join(__dirname, '..', 'bin', `${base}-linux-${arch}`)
     );
   } else {
@@ -46,7 +47,9 @@ function resolveExistingBinary(base) {
       path.join(__dirname, '..', 'bin', `${base}-${platform === 'win32' ? 'win' : platform}-${arch}${isWin ? '.exe' : ''}`),
       path.join(__dirname, '..', 'bin', `${base}-${platform}-${arch}${isWin ? '.exe' : ''}`),
       path.join(__dirname, '..', 'bin', `${base}-${key}${isWin ? '.exe' : ''}`),
-      path.join(__dirname, '..', 'bin', isWin ? `${base}-win-x64.exe` : `${base}-linux-x64`)
+      path.join(__dirname, '..', 'bin', isWin ? `${base}-win-x64.exe` : `${base}-linux-x64`),
+      path.join(__dirname, '..', 'bin', `${base}-linux-arm64`),
+      path.join(__dirname, '..', 'bin', `${base}-android-arm64`)
     );
   }
 

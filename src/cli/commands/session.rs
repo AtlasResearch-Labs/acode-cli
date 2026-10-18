@@ -882,6 +882,9 @@ pub async fn handle(
                     orchestrator.security.session_allowed_commands.len()
                 );
                 println!("\nCommands:");
+                println!(
+                    "  /security <full|sandboxed|strict>      - Set security profile directly"
+                );
                 println!("  /security mode <full|sandboxed|strict> - Toggle security profile");
                 println!("  /security trust <path>                 - Add persistent trusted path");
                 println!("  /security untrust <path>               - Remove trusted path");
@@ -892,6 +895,22 @@ pub async fn handle(
             }
 
             match parts[0].to_lowercase().as_str() {
+                "full" | "sandboxed" | "strict" => {
+                    match parts[0].parse::<crate::security::SecurityMode>() {
+                        Ok(new_mode) => {
+                            orchestrator.security.set_mode(new_mode);
+                            println!(
+                                "{}[OK] Switched agent security mode to: {}{}\n",
+                                TuiRenderer::GREEN,
+                                new_mode,
+                                TuiRenderer::RESET
+                            );
+                        }
+                        Err(e) => {
+                            println!("{}[FAIL] {}{}\n", TuiRenderer::RED, e, TuiRenderer::RESET);
+                        }
+                    }
+                }
                 "mode" => {
                     if parts.len() < 2 {
                         println!(

@@ -257,6 +257,7 @@ impl DaedalusREPL {
 
                     let task_start = std::time::Instant::now();
                     let mut streamed_any = false;
+                    let mut has_streamed_tokens = false;
                     let mut token_buffer = String::new();
                     let mut tick_counter = 0usize;
                     let mut last_tool_start = std::time::Instant::now();
@@ -286,6 +287,7 @@ impl DaedalusREPL {
                                     println!("{}", TuiRenderer::render_markdown_line(trimmed));
                                 }
                                 streamed_any = true;
+                                has_streamed_tokens = true;
                             }
                             AgentEvent::ToolStart { name, args } => {
                                 if streamed_any {
@@ -379,7 +381,7 @@ impl DaedalusREPL {
 
                     match res {
                         Ok(summary) => {
-                            if !summary.is_empty() && !streamed_any {
+                            if !summary.is_empty() && !has_streamed_tokens {
                                 println!("{}\n", summary);
                             }
                         }

@@ -99,7 +99,7 @@ impl TuiRenderer {
         };
 
         let vp = Viewport::current();
-        let width = vp.card_width(78);
+        let width = vp.card_width(82);
         let top_border = Self::BOX_H.repeat(width.saturating_sub(2));
         let bot_border = Self::BOX_H.repeat(width.saturating_sub(2));
 
@@ -182,7 +182,7 @@ impl TuiRenderer {
                 "{}",
                 pad_box_line(
                     &format!(
-                        "  {}{}ATLAS DAEDALUS{} {}v{}-industrial{} · Native Rust Engine · Atlas Research Labs",
+                        "  {}{}ATLAS DAEDALUS{} {}v{}-industrial{} · Pure Rust Engine · Atlas Research Labs",
                         Self::BOLD,
                         Self::WHITE,
                         Self::RESET,
@@ -426,7 +426,7 @@ impl TuiRenderer {
         };
 
         let vp = Viewport::current();
-        let width = vp.card_width(78);
+        let width = vp.card_width(82);
         let border = Self::BOX_H.repeat(width);
         println!("{}{}{}", Self::CHARCOAL, border, Self::RESET);
 

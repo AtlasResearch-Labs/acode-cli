@@ -98,6 +98,10 @@ impl TuiRenderer {
             _ => Self::CYAN_ACCENT,
         };
 
+        if std::env::var("ACODE_MASCOT").is_ok() {
+            crate::cli::art::MascotEngine::print_mascot(crate::cli::art::MascotVariant::Automaton);
+        }
+
         let vp = Viewport::current();
         let width = vp.card_width(82);
         let top_border = Self::BOX_H.repeat(width.saturating_sub(2));

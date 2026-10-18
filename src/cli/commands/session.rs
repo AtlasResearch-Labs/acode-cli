@@ -1759,6 +1759,30 @@ pub async fn handle(
             }
             true
         }
+        "/mascot" | "/art" => {
+            use crate::cli::art::{MascotEngine, MascotVariant};
+            if arg.is_empty() {
+                MascotEngine::print_mascot(MascotVariant::Automaton);
+                println!(
+                    "  {}Variants:{} /mascot automaton | /mascot winged | /mascot binary\n",
+                    TuiRenderer::SLATE,
+                    TuiRenderer::RESET
+                );
+            } else {
+                match MascotVariant::from_str(arg) {
+                    Some(variant) => MascotEngine::print_mascot(variant),
+                    None => {
+                        println!(
+                            "{}Unknown variant '{}'. Choose: automaton, winged, binary{}\n",
+                            TuiRenderer::RED,
+                            arg,
+                            TuiRenderer::RESET
+                        );
+                    }
+                }
+            }
+            true
+        }
         "/exit" | "/quit" => {
             println!(
                 "\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n",
@@ -1835,6 +1859,11 @@ pub fn print_help() {
     );
     println!(
         "  {}/security <mode>{}  Set mode (full | sandboxed | strict)",
+        TuiRenderer::CYAN,
+        TuiRenderer::RESET
+    );
+    println!(
+        "  {}/mascot [mode]{}    Display Greek Daedalus Mascot (automaton | winged | binary)",
         TuiRenderer::CYAN,
         TuiRenderer::RESET
     );

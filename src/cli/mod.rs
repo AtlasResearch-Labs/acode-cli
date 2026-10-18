@@ -1,3 +1,4 @@
+pub mod art;
 pub mod commands;
 pub mod repl;
 pub mod tui;

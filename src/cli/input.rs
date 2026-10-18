@@ -92,28 +92,32 @@ impl TerminalInputEngine {
         self.history_index = None;
         menu.is_open = false;
 
-        let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
         let mut menu_lines_rendered = 0usize;
+        let mut prompt_lines_rendered = 0usize;
 
         let redraw = |buf: &str,
                       cur_pos: usize,
                       ghost: Option<&str>,
                       m: &mut FloatingMenu,
-                      m_lines: &mut usize| {
+                      m_lines: &mut usize,
+                      p_lines: &mut usize| {
             let mut out = String::new();
 
-            // Clear previously rendered menu lines
-            if *m_lines > 0 {
-                out.push_str(&format!("\r\x1b[{}A", *m_lines));
-                for _ in 0..*m_lines {
-                    out.push_str("\x1b[2K\n");
+            // Clear previously rendered prompt and menu lines
+            let total_prev_lines = *m_lines + *p_lines;
+            if total_prev_lines > 0 {
+                out.push_str(&format!("\r\x1b[{}A", total_prev_lines));
+                for _ in 0..total_prev_lines {
+                    out.push_str("\x1b[2K\r\n");
                 }
-                out.push_str(&format!("\r\x1b[{}A", *m_lines));
+                out.push_str(&format!("\r\x1b[{}A", total_prev_lines));
                 *m_lines = 0;
+                *p_lines = 0;
             }
 
             // Draw floating menu if active
             if m.is_open {
+                let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
                 let popover = m.render_popover(buf, term_width);
                 if !popover.is_empty() {
                     out.push_str(&popover);
@@ -123,23 +127,83 @@ impl TerminalInputEngine {
 
             // Draw prompt and buffer
             out.push_str("\r\x1b[2K");
-            out.push_str(prompt);
-            out.push_str(buf);
+            if !buf.contains('\n') {
+                out.push_str(prompt);
+                out.push_str(buf);
 
-            // Draw dimmed ghost text if cursor is at end of buffer
-            let count = buf.chars().count();
-            if cur_pos == count {
-                if let Some(g) = ghost {
-                    out.push_str("\x1b[2m\x1b[38;5;244m");
-                    out.push_str(g);
-                    out.push_str("\x1b[0m");
+                // Draw dimmed ghost text if cursor is at end of buffer
+                let count = buf.chars().count();
+                if cur_pos == count {
+                    if let Some(g) = ghost {
+                        out.push_str("\x1b[2m\x1b[38;5;244m");
+                        out.push_str(g);
+                        out.push_str("\x1b[0m");
+                        // Move cursor back so it blinks at the insertion point, not after the ghost text!
+                        let g_len = g.chars().count();
+                        if g_len > 0 {
+                            out.push_str(&format!("\x1b[{}D", g_len));
+                        }
+                    }
                 }
-            }
 
-            // Restore cursor position if not at end
-            if cur_pos < count {
-                let diff = count - cur_pos;
-                out.push_str(&format!("\x1b[{}D", diff));
+                // Restore cursor position if not at end
+                if cur_pos < count {
+                    let diff = count - cur_pos;
+                    out.push_str(&format!("\x1b[{}D", diff));
+                }
+                *p_lines = 0;
+            } else {
+                // Multiline buffer rendering with \r\n and 2D cursor placement
+                let lines: Vec<&str> = buf.split('\n').collect();
+                let num_lines = lines.len();
+                *p_lines = num_lines - 1;
+
+                let mut char_acc = 0usize;
+                let mut target_line = 0usize;
+                let mut target_col = 0usize;
+
+                for (idx, line) in lines.iter().enumerate() {
+                    let line_char_count = line.chars().count();
+                    if cur_pos <= char_acc + line_char_count {
+                        target_line = idx;
+                        target_col = cur_pos - char_acc;
+                        break;
+                    }
+                    char_acc += line_char_count + 1; // +1 for newline
+                }
+
+                for (idx, line) in lines.iter().enumerate() {
+                    if idx == 0 {
+                        out.push_str(prompt);
+                        out.push_str(line);
+                    } else {
+                        out.push_str("  ... ");
+                        out.push_str(line);
+                    }
+                    if idx + 1 < num_lines {
+                        out.push_str("\r\n\x1b[2K");
+                    }
+                }
+
+                // If on last line, display ghost text if available
+                if target_line + 1 == num_lines && cur_pos == buf.chars().count() {
+                    if let Some(g) = ghost {
+                        out.push_str("\x1b[2m\x1b[38;5;244m");
+                        out.push_str(g);
+                        out.push_str("\x1b[0m");
+                        let g_len = g.chars().count();
+                        if g_len > 0 {
+                            out.push_str(&format!("\x1b[{}D", g_len));
+                        }
+                    }
+                }
+
+                let lines_up = (num_lines - 1) - target_line;
+                if lines_up > 0 {
+                    out.push_str(&format!("\x1b[{}A", lines_up));
+                }
+                let prefix_len = if target_line == 0 { 2 } else { 6 };
+                out.push_str(&format!("\r\x1b[{}C", prefix_len + target_col));
             }
 
             print!("{}", out);
@@ -153,136 +217,181 @@ impl TerminalInputEngine {
             self.ghost_text.as_deref(),
             menu,
             &mut menu_lines_rendered,
+            &mut prompt_lines_rendered,
         );
 
-        while let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+        loop {
+            let event = match crossterm::event::read() {
+                Ok(ev) => ev,
+                Err(_) => break,
+            };
 
-            // 1. Floating menu navigation
-            if menu.is_open {
-                let count = menu.filter_indices(&self.buffer).len();
-                match key.code {
-                    KeyCode::Up => {
-                        menu.select_prev(count);
-                        redraw(
-                            &self.buffer,
-                            self.cursor_pos,
-                            self.ghost_text.as_deref(),
-                            menu,
-                            &mut menu_lines_rendered,
-                        );
-                        continue;
-                    }
-                    KeyCode::Down => {
-                        menu.select_next(count);
-                        redraw(
-                            &self.buffer,
-                            self.cursor_pos,
-                            self.ghost_text.as_deref(),
-                            menu,
-                            &mut menu_lines_rendered,
-                        );
-                        continue;
-                    }
-                    KeyCode::Esc => {
-                        menu.is_open = false;
-                        redraw(
-                            &self.buffer,
-                            self.cursor_pos,
-                            self.ghost_text.as_deref(),
-                            menu,
-                            &mut menu_lines_rendered,
-                        );
-                        continue;
-                    }
-                    KeyCode::Tab | KeyCode::Enter => {
-                        if let Some(item) = menu.get_selected_item(&self.buffer) {
-                            self.buffer = item.name.clone();
-                            if item.args.is_some() {
-                                self.buffer.push(' ');
-                            }
-                            self.cursor_pos = self.char_count();
-                            let is_enter = key.code == KeyCode::Enter;
-                            let no_args = item.args.is_none();
-                            menu.is_open = false;
-
-                            if is_enter && no_args {
-                                if menu_lines_rendered > 0 {
-                                    print!("\r\x1b[{}A", menu_lines_rendered);
-                                    for _ in 0..menu_lines_rendered {
-                                        print!("\x1b[2K\n");
-                                    }
-                                    print!("\r\x1b[{}A", menu_lines_rendered);
-                                }
-                                let submitted = std::mem::take(&mut self.buffer);
-                                self.cursor_pos = 0;
-                                println!();
-                                return Ok(Some(submitted));
-                            }
-
-                            self.ghost_text =
-                                completion.get_ghost_suggestion(&self.buffer, ast_symbols);
-                            redraw(
-                                &self.buffer,
-                                self.cursor_pos,
-                                self.ghost_text.as_deref(),
-                                menu,
-                                &mut menu_lines_rendered,
-                            );
+            match event {
+                crossterm::event::Event::Resize(_, _) => {
+                    redraw(
+                        &self.buffer,
+                        self.cursor_pos,
+                        self.ghost_text.as_deref(),
+                        menu,
+                        &mut menu_lines_rendered,
+                        &mut prompt_lines_rendered,
+                    );
+                }
+                crossterm::event::Event::Paste(text) => {
+                    for c in text.chars() {
+                        if c == '\r' {
                             continue;
                         }
+                        self.insert_char(c);
                     }
-                    _ => {}
+                    self.ghost_text = completion.get_ghost_suggestion(&self.buffer, ast_symbols);
+                    redraw(
+                        &self.buffer,
+                        self.cursor_pos,
+                        self.ghost_text.as_deref(),
+                        menu,
+                        &mut menu_lines_rendered,
+                        &mut prompt_lines_rendered,
+                    );
                 }
-            }
+                crossterm::event::Event::Key(key) => {
+                    if key.kind == KeyEventKind::Release {
+                        continue;
+                    }
 
-            // 2. Pass key to input engine
-            if let Some(action) = self.handle_key(key) {
-                match action {
-                    InputAction::Submit(line) => {
-                        if menu_lines_rendered > 0 {
-                            print!("\r\x1b[{}A", menu_lines_rendered);
-                            for _ in 0..menu_lines_rendered {
-                                print!("\x1b[2K\n");
+                    // 1. Floating menu navigation
+                    if menu.is_open {
+                        let count = menu.filter_indices(&self.buffer).len();
+                        match key.code {
+                            KeyCode::Up => {
+                                menu.select_prev(count);
+                                redraw(
+                                    &self.buffer,
+                                    self.cursor_pos,
+                                    self.ghost_text.as_deref(),
+                                    menu,
+                                    &mut menu_lines_rendered,
+                                    &mut prompt_lines_rendered,
+                                );
+                                continue;
                             }
-                            print!("\r\x1b[{}A", menu_lines_rendered);
+                            KeyCode::Down => {
+                                menu.select_next(count);
+                                redraw(
+                                    &self.buffer,
+                                    self.cursor_pos,
+                                    self.ghost_text.as_deref(),
+                                    menu,
+                                    &mut menu_lines_rendered,
+                                    &mut prompt_lines_rendered,
+                                );
+                                continue;
+                            }
+                            KeyCode::Esc => {
+                                menu.is_open = false;
+                                redraw(
+                                    &self.buffer,
+                                    self.cursor_pos,
+                                    self.ghost_text.as_deref(),
+                                    menu,
+                                    &mut menu_lines_rendered,
+                                    &mut prompt_lines_rendered,
+                                );
+                                continue;
+                            }
+                            KeyCode::Tab | KeyCode::Enter => {
+                                if let Some(item) = menu.get_selected_item(&self.buffer) {
+                                    self.buffer = item.name.clone();
+                                    if item.args.is_some() {
+                                        self.buffer.push(' ');
+                                    }
+                                    self.cursor_pos = self.char_count();
+                                    let is_enter = key.code == KeyCode::Enter;
+                                    let no_args = item.args.is_none();
+                                    menu.is_open = false;
+
+                                    if is_enter && no_args {
+                                        let total = menu_lines_rendered + prompt_lines_rendered;
+                                        if total > 0 {
+                                            print!("\r\x1b[{}A", total);
+                                            for _ in 0..total {
+                                                print!("\x1b[2K\r\n");
+                                            }
+                                            print!("\r\x1b[{}A", total);
+                                        }
+                                        let submitted = std::mem::take(&mut self.buffer);
+                                        self.cursor_pos = 0;
+                                        println!();
+                                        return Ok(Some(submitted));
+                                    }
+
+                                    self.ghost_text =
+                                        completion.get_ghost_suggestion(&self.buffer, ast_symbols);
+                                    redraw(
+                                        &self.buffer,
+                                        self.cursor_pos,
+                                        self.ghost_text.as_deref(),
+                                        menu,
+                                        &mut menu_lines_rendered,
+                                        &mut prompt_lines_rendered,
+                                    );
+                                    continue;
+                                }
+                            }
+                            _ => {}
                         }
-                        println!();
-                        return Ok(Some(line));
                     }
-                    InputAction::Exit => {
-                        println!();
-                        return Ok(None);
+
+                    // 2. Pass key to input engine
+                    if let Some(action) = self.handle_key(key) {
+                        match action {
+                            InputAction::Submit(line) => {
+                                let total = menu_lines_rendered + prompt_lines_rendered;
+                                if total > 0 {
+                                    print!("\r\x1b[{}A", total);
+                                    for _ in 0..total {
+                                        print!("\x1b[2K\r\n");
+                                    }
+                                    print!("\r\x1b[{}A", total);
+                                }
+                                println!();
+                                return Ok(Some(line));
+                            }
+                            InputAction::Exit => {
+                                println!();
+                                return Ok(None);
+                            }
+                            InputAction::Cancel => {
+                                println!();
+                                return Ok(Some(String::new()));
+                            }
+                            InputAction::OpenMenu => {
+                                menu.is_open = true;
+                                menu.selected_index = 0;
+                            }
+                            InputAction::AcceptGhost | InputAction::Redraw => {}
+                        }
                     }
-                    InputAction::Cancel => {
-                        println!();
-                        return Ok(Some(String::new()));
-                    }
-                    InputAction::OpenMenu => {
+
+                    // Automatically open menu when typing leading slash
+                    if self.buffer.starts_with('/') && !self.buffer.contains(' ') {
                         menu.is_open = true;
-                        menu.selected_index = 0;
+                    } else {
+                        menu.is_open = false;
                     }
-                    InputAction::AcceptGhost | InputAction::Redraw => {}
+
+                    self.ghost_text = completion.get_ghost_suggestion(&self.buffer, ast_symbols);
+                    redraw(
+                        &self.buffer,
+                        self.cursor_pos,
+                        self.ghost_text.as_deref(),
+                        menu,
+                        &mut menu_lines_rendered,
+                        &mut prompt_lines_rendered,
+                    );
                 }
+                _ => {}
             }
-
-            // Automatically open menu when typing leading slash
-            if self.buffer.starts_with('/') && !self.buffer.contains(' ') {
-                menu.is_open = true;
-            } else {
-                menu.is_open = false;
-            }
-
-            self.ghost_text = completion.get_ghost_suggestion(&self.buffer, ast_symbols);
-            redraw(
-                &self.buffer,
-                self.cursor_pos,
-                self.ghost_text.as_deref(),
-                menu,
-                &mut menu_lines_rendered,
-            );
         }
 
         Ok(None)
@@ -482,8 +591,8 @@ impl TerminalInputEngine {
 
     /// Handle raw keyboard event and translate into an `InputAction`
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<InputAction> {
-        // Discard KeyRelease events on Windows/Crossterm to prevent double-firing
-        if key.kind != KeyEventKind::Press {
+        // Discard KeyRelease events on Windows/Crossterm to prevent double-firing, but allow Press and Repeat
+        if key.kind == KeyEventKind::Release {
             return None;
         }
 
@@ -680,5 +789,45 @@ mod tests {
         assert!(engine.accept_ghost_full());
         assert_eq!(engine.buffer, "/index --symbols");
         assert_eq!(engine.cursor_pos, 16);
+    }
+
+    #[test]
+    fn test_input_engine_accept_ghost_word() {
+        let mut engine = TerminalInputEngine::new(vec![]);
+        engine.insert_char('/');
+        engine.ghost_text = Some("index --symbols".to_string());
+        assert!(engine.accept_ghost_word());
+        assert_eq!(engine.buffer, "/index ");
+    }
+
+    #[test]
+    fn test_input_engine_key_repeat_press_and_release() {
+        let mut engine = TerminalInputEngine::new(vec![]);
+        let press_event = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        let mut repeat_event = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        repeat_event.kind = KeyEventKind::Repeat;
+        let mut release_event = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
+        release_event.kind = KeyEventKind::Release;
+
+        assert_eq!(engine.handle_key(press_event), Some(InputAction::Redraw));
+        assert_eq!(engine.handle_key(repeat_event), Some(InputAction::Redraw));
+        assert_eq!(engine.handle_key(release_event), None);
+        assert_eq!(engine.buffer, "xy");
+    }
+
+    #[test]
+    fn test_input_engine_history_navigation() {
+        let mut engine = TerminalInputEngine::new(vec![
+            "git status".to_string(),
+            "cargo test".to_string(),
+        ]);
+        engine.history_up();
+        assert_eq!(engine.buffer, "cargo test");
+        engine.history_up();
+        assert_eq!(engine.buffer, "git status");
+        engine.history_down();
+        assert_eq!(engine.buffer, "cargo test");
+        engine.history_down();
+        assert_eq!(engine.buffer, "");
     }
 }

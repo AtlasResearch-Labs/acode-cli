@@ -16,7 +16,7 @@ pub async fn handle(
             print_help();
             true
         }
-        "/clear" => {
+        "/clear" | "/cls" | "/reset" => {
             print!("\x1B[2J\x1B[1;1H");
             orchestrator.clear_history();
             println!(
@@ -121,7 +121,7 @@ pub async fn handle(
             }
             true
         }
-        "/cost" => {
+        "/cost" | "/stats" => {
             let traces = orchestrator.chronicle.get_recent_traces(10);
             let metrics = orchestrator.cost_tracker.get_metrics();
             let total_cost = metrics.total_cost_usd;
@@ -252,6 +252,188 @@ pub async fn handle(
             }
             true
         }
+        "/compact" => {
+            if orchestrator.history.is_empty() {
+                println!(
+                    "{}No active conversation history to compact.{}\n",
+                    TuiRenderer::DIM,
+                    TuiRenderer::RESET
+                );
+                return true;
+            }
+
+            let initial_msgs = orchestrator.history.len();
+            let initial_tokens: usize = orchestrator
+                .history
+                .iter()
+                .map(|m| (m.content.len() / 4).max(1))
+                .sum();
+
+            let chat_msgs: Vec<crate::context::compressor::ChatMessage> = orchestrator
+                .history
+                .iter()
+                .map(|m| crate::context::compressor::ChatMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    tool_calls: m.tool_calls.clone(),
+                    tool_call_id: m.tool_call_id.clone(),
+                    name: m.name.clone(),
+                })
+                .collect();
+
+            let summary =
+                crate::context::compressor::TrajectoryCompressor::generate_semantic_summary(
+                    &chat_msgs,
+                );
+
+            let keep_count = 4.min(orchestrator.history.len());
+            let recent_slice =
+                orchestrator.history[orchestrator.history.len() - keep_count..].to_vec();
+
+            let mut compacted = Vec::new();
+            compacted.push(crate::providers::types::LLMMessage {
+                role: "system".to_string(),
+                content: format!("Summary of prior conversation:\n{}", summary),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            });
+            compacted.extend(recent_slice);
+            orchestrator.history = compacted;
+
+            let final_msgs = orchestrator.history.len();
+            let final_tokens: usize = orchestrator
+                .history
+                .iter()
+                .map(|m| (m.content.len() / 4).max(1))
+                .sum();
+            let saved_pct = if initial_tokens > 0 && initial_tokens >= final_tokens {
+                ((initial_tokens - final_tokens) as f64 / initial_tokens as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            println!(
+                "\n{}[OK] Conversation memory compacted successfully.{}\n  Turns:   {} -> {}\n  Tokens:  ~{} -> ~{} ({:.1}% reduction)\n",
+                TuiRenderer::GREEN,
+                TuiRenderer::RESET,
+                initial_msgs,
+                final_msgs,
+                initial_tokens,
+                final_tokens,
+                saved_pct
+            );
+            true
+        }
+        "/doctor" => {
+            println!(
+                "\n{}[ATLAS DAEDALUS DIAGNOSTIC HEALTH CHECK]{}\n",
+                TuiRenderer::BOLD,
+                TuiRenderer::RESET
+            );
+
+            let rustc_ver = std::process::Command::new("rustc")
+                .arg("--version")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            if !rustc_ver.trim().is_empty() {
+                println!(
+                    "  {}[OK]{} Rust toolchain:      {}",
+                    TuiRenderer::GREEN,
+                    TuiRenderer::RESET,
+                    rustc_ver.trim()
+                );
+            } else {
+                println!(
+                    "  {}[WARN]{} Rust toolchain:    Not found on PATH",
+                    TuiRenderer::YELLOW,
+                    TuiRenderer::RESET
+                );
+            }
+
+            let node_ver = std::process::Command::new("node")
+                .arg("-v")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            if !node_ver.trim().is_empty() {
+                println!(
+                    "  {}[OK]{} Node.js runtime:     {}",
+                    TuiRenderer::GREEN,
+                    TuiRenderer::RESET,
+                    node_ver.trim()
+                );
+            } else {
+                println!(
+                    "  {}[INFO]{} Node.js runtime:    Optional (npm wrapper requires Node 18+)",
+                    TuiRenderer::DIM,
+                    TuiRenderer::RESET
+                );
+            }
+
+            let git_ver = std::process::Command::new("git")
+                .arg("--version")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            if !git_ver.trim().is_empty() {
+                println!(
+                    "  {}[OK]{} Git version:         {}",
+                    TuiRenderer::GREEN,
+                    TuiRenderer::RESET,
+                    git_ver.trim()
+                );
+            } else {
+                println!(
+                    "  {}[WARN]{} Git version:        Not found on PATH",
+                    TuiRenderer::YELLOW,
+                    TuiRenderer::RESET
+                );
+            }
+
+            let stats = orchestrator.tools.symbols.get_cache_stats();
+            println!(
+                "  {}[OK]{} Merkle AST Index:    {} cached files, {} total symbols",
+                TuiRenderer::GREEN,
+                TuiRenderer::RESET,
+                stats.cached_files,
+                stats.total_symbols
+            );
+
+            let provider = &orchestrator.provider.config.provider;
+            let model = &orchestrator.provider.config.model;
+            let has_key = orchestrator.provider.config.api_key.is_some();
+            if has_key {
+                println!(
+                    "  {}[OK]{} LLM Provider:        {} ({}) [API key loaded]",
+                    TuiRenderer::GREEN,
+                    TuiRenderer::RESET,
+                    provider,
+                    model
+                );
+            } else {
+                println!(
+                    "  {}[WARN]{} LLM Provider:      {} ({}) [No API key - configure via /key]",
+                    TuiRenderer::YELLOW,
+                    TuiRenderer::RESET,
+                    provider,
+                    model
+                );
+            }
+
+            let sec_mode = orchestrator.security.config.mode;
+            println!(
+                "  {}[OK]{} Security Shield:     {:?} (Active Policy Defense)\n",
+                TuiRenderer::GREEN,
+                TuiRenderer::RESET,
+                sec_mode
+            );
+            true
+        }
         "/timer" | "/countdown" => {
             if arg.is_empty() {
                 println!(
@@ -333,7 +515,7 @@ pub async fn handle(
             }
             true
         }
-        "/audit" => {
+        "/audit" | "/review" => {
             println!(
                 "{}[ACODE] Launching Argus AST security audit...{}",
                 TuiRenderer::DIM,
@@ -1838,7 +2020,7 @@ pub async fn handle(
             }
             true
         }
-        "/exit" | "/quit" => {
+        "/exit" | "/quit" | "/q" => {
             println!(
                 "\n{}[ACODE] Exiting Atlas Daedalus. Sovereign Rust runtime stopped.{}\n",
                 TuiRenderer::DIM,

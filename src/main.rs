@@ -82,6 +82,19 @@ fn init_windows_console() {
                 SetConsoleMode(h_err, mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
             }
         }
+
+        // 3. Disable QuickEdit mode on stdin so clicking inside the window doesn't freeze the process
+        const STD_INPUT_HANDLE: i32 = -10;
+        const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
+        const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+
+        let h_in = GetStdHandle(STD_INPUT_HANDLE);
+        if h_in != 0 && h_in != -1 {
+            let mut mode: u32 = 0;
+            if GetConsoleMode(h_in, &mut mode) != 0 {
+                SetConsoleMode(h_in, (mode & !ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS);
+            }
+        }
     }
 }
 

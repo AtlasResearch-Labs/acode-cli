@@ -153,17 +153,24 @@ impl TerminalInputEngine {
                 out.push_str(prompt);
                 out.push_str(buf);
 
-                // Draw dimmed ghost text if cursor is at end of buffer
+                // Draw dimmed ghost text if cursor is at end of buffer (guarded against line wrap)
                 let count = buf.chars().count();
                 if cur_pos == count {
                     if let Some(g) = ghost {
-                        out.push_str("\x1b[2m\x1b[38;5;244m");
-                        out.push_str(g);
-                        out.push_str("\x1b[0m");
-                        // Move cursor back so it blinks at the insertion point, not after the ghost text!
-                        let g_len = g.chars().count();
-                        if g_len > 0 {
-                            out.push_str(&format!("\x1b[{}D", g_len));
+                        let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let prompt_len = if prompt.contains('>') { 2 } else { 3 };
+                        let cols_used = prompt_len + count;
+                        let max_ghost_len = (term_width as usize).saturating_sub(cols_used + 2);
+
+                        if max_ghost_len > 0 {
+                            let clamped_g: String = g.chars().take(max_ghost_len).collect();
+                            let g_len = clamped_g.chars().count();
+                            if g_len > 0 {
+                                out.push_str("\x1b[90m");
+                                out.push_str(&clamped_g);
+                                out.push_str("\x1b[0m");
+                                out.push_str(&format!("\x1b[{}D", g_len));
+                            }
                         }
                     }
                 }
@@ -207,15 +214,24 @@ impl TerminalInputEngine {
                     }
                 }
 
-                // If on last line, display ghost text if available
+                // If on last line, display ghost text if available (guarded against line wrap)
                 if target_line + 1 == num_lines && cur_pos == buf.chars().count() {
                     if let Some(g) = ghost {
-                        out.push_str("\x1b[2m\x1b[38;5;244m");
-                        out.push_str(g);
-                        out.push_str("\x1b[0m");
-                        let g_len = g.chars().count();
-                        if g_len > 0 {
-                            out.push_str(&format!("\x1b[{}D", g_len));
+                        let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let prefix_len = if target_line == 0 { if prompt.contains('>') { 2 } else { 3 } } else { 6 };
+                        let last_line_len = lines.last().map(|l| l.chars().count()).unwrap_or(0);
+                        let cols_used = prefix_len + last_line_len;
+                        let max_ghost_len = (term_width as usize).saturating_sub(cols_used + 2);
+
+                        if max_ghost_len > 0 {
+                            let clamped_g: String = g.chars().take(max_ghost_len).collect();
+                            let g_len = clamped_g.chars().count();
+                            if g_len > 0 {
+                                out.push_str("\x1b[90m");
+                                out.push_str(&clamped_g);
+                                out.push_str("\x1b[0m");
+                                out.push_str(&format!("\x1b[{}D", g_len));
+                            }
                         }
                     }
                 }
@@ -321,14 +337,16 @@ impl TerminalInputEngine {
                                 );
                                 continue;
                             }
-                            KeyCode::Tab | KeyCode::Enter => {
+                            KeyCode::Tab | KeyCode::Enter | KeyCode::Char('\r') | KeyCode::Char('\n') => {
                                 if let Some(item) = menu.get_selected_item(&self.buffer) {
                                     self.buffer = item.name.clone();
                                     if item.args.is_some() {
                                         self.buffer.push(' ');
                                     }
                                     self.cursor_pos = self.char_count();
-                                    let is_enter = key.code == KeyCode::Enter;
+                                    let is_enter = key.code == KeyCode::Enter
+                                        || key.code == KeyCode::Char('\r')
+                                        || key.code == KeyCode::Char('\n');
                                     let no_args = item.args.is_none();
                                     menu.is_open = false;
 
@@ -632,17 +650,23 @@ impl TerminalInputEngine {
 
         match (key.code, key.modifiers) {
             // Disambiguated Shift+Enter (Kitty CSI 13;2 u) or Ctrl+J fallback
-            (KeyCode::Enter, KeyModifiers::SHIFT)
-            | (KeyCode::Char('\n'), KeyModifiers::SHIFT)
-            | (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
+            (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+                self.insert_newline();
+                Some(InputAction::Redraw)
+            }
+            (KeyCode::Char('\n'), m) if m.contains(KeyModifiers::SHIFT) => {
+                self.insert_newline();
+                Some(InputAction::Redraw)
+            }
+            (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
                 self.insert_newline();
                 Some(InputAction::Redraw)
             }
 
-            // Plain Enter submits prompt (handles KeyCode::Enter, '\r', '\n')
-            (KeyCode::Enter, KeyModifiers::NONE)
+            // Plain Enter submits prompt (handles KeyCode::Enter, '\r', '\n' regardless of modifiers)
+            (KeyCode::Enter, _)
             | (KeyCode::Char('\r'), _)
-            | (KeyCode::Char('\n'), KeyModifiers::NONE) => {
+            | (KeyCode::Char('\n'), _) => {
                 let submitted = std::mem::take(&mut self.buffer);
                 self.cursor_pos = 0;
                 self.history_index = None;
@@ -651,7 +675,7 @@ impl TerminalInputEngine {
             }
 
             // Tab accepts ghost suggestion if available, otherwise triggers menu
-            (KeyCode::Tab, KeyModifiers::NONE) => {
+            (KeyCode::Tab, _) => {
                 if self.accept_ghost_full() {
                     Some(InputAction::AcceptGhost)
                 } else if self.buffer.starts_with('/') {
@@ -662,7 +686,7 @@ impl TerminalInputEngine {
             }
 
             // Right Arrow at buffer end accepts ghost completion
-            (KeyCode::Right, KeyModifiers::NONE) if self.cursor_pos == self.char_count() => {
+            (KeyCode::Right, m) if self.cursor_pos == self.char_count() && !m.contains(KeyModifiers::ALT) && !m.contains(KeyModifiers::CONTROL) => {
                 if self.accept_ghost_full() {
                     Some(InputAction::AcceptGhost)
                 } else {
@@ -691,11 +715,11 @@ impl TerminalInputEngine {
             }
 
             // Standard cursor navigation
-            (KeyCode::Left, KeyModifiers::NONE) => {
+            (KeyCode::Left, m) if !m.contains(KeyModifiers::ALT) && !m.contains(KeyModifiers::CONTROL) => {
                 self.move_cursor_left();
                 Some(InputAction::Redraw)
             }
-            (KeyCode::Right, KeyModifiers::NONE) => {
+            (KeyCode::Right, m) if !m.contains(KeyModifiers::ALT) && !m.contains(KeyModifiers::CONTROL) => {
                 self.move_cursor_right();
                 Some(InputAction::Redraw)
             }
@@ -738,16 +762,16 @@ impl TerminalInputEngine {
             }
 
             // History navigation
-            (KeyCode::Up, KeyModifiers::NONE) => {
+            (KeyCode::Up, _) => {
                 self.history_up();
                 Some(InputAction::Redraw)
             }
-            (KeyCode::Down, KeyModifiers::NONE) => {
+            (KeyCode::Down, _) => {
                 self.history_down();
                 Some(InputAction::Redraw)
             }
 
-            // Cancellation and Exit
+            // Cancellation, Exit, and Esc
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 if !self.buffer.is_empty() {
                     self.clear_line();
@@ -763,9 +787,17 @@ impl TerminalInputEngine {
                     None
                 }
             }
+            (KeyCode::Esc, _) => {
+                if self.ghost_text.is_some() {
+                    self.ghost_text = None;
+                    Some(InputAction::Redraw)
+                } else {
+                    None
+                }
+            }
 
             // Slash command trigger
-            (KeyCode::Char('/'), KeyModifiers::NONE) if self.buffer.is_empty() => {
+            (KeyCode::Char('/'), _) if self.buffer.is_empty() => {
                 self.insert_char('/');
                 Some(InputAction::OpenMenu)
             }

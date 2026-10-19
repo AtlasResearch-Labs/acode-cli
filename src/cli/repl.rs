@@ -82,14 +82,13 @@ impl DaedalusREPL {
 
     fn active_prompt_prefix() -> String {
         let indigo = TuiRenderer::INDIGO;
-        let box_bl = TuiRenderer::BOX_BL;
         let reset = TuiRenderer::RESET;
-        let arrow = if cfg!(windows) && std::env::var("WT_SESSION").is_err() {
-            ">"
+        if cfg!(windows) && std::env::var("WT_SESSION").is_err() {
+            format!("{indigo}>{reset} ")
         } else {
-            "❯"
-        };
-        format!("{indigo}{box_bl}{arrow}{reset} ")
+            let box_bl = TuiRenderer::BOX_BL;
+            format!("{indigo}{box_bl}❯{reset} ")
+        }
     }
 
     fn load_history() -> Vec<String> {
